@@ -38,6 +38,9 @@ func (r *RoomsRepo) Rooms(projectID string) []domain.ChatRoom {
 		if item.Name == "" {
 			item.Name = row.Name
 		}
+		if row.Updated != nil {
+			item.UpdatedAt = *row.Updated
+		}
 		out = append(out, item)
 	}
 	return out
@@ -66,6 +69,11 @@ func (r *RoomsRepo) PutRoom(v domain.ChatRoom) error {
 		"id": v.ID, "project_id": v.ProjectID, "name": v.Name, "created_by": v.CreatedBy,
 		"payload": mustJSON(v), "created_at": timePtr(v.CreatedAt), "updated_at": timePtr(v.UpdatedAt),
 	})
+}
+
+// TouchRoom records activity without replacing concurrent room metadata changes.
+func (r *RoomsRepo) TouchRoom(id string) error {
+	return r.DB.Model(&chatRoomRow{}).Where("id = ?", id).Update("updated_at", time.Now().UTC()).Error
 }
 
 func (r *RoomsRepo) Messages(roomID string, limit int) []domain.ChatMessage {

@@ -1,4 +1,7 @@
 let roomsPollTimer = 0;
+const ROOM_MESSAGE_LIMIT = 4000;
+const ROOM_ISSUE_TITLE_LIMIT = 200;
+const ROOM_ISSUE_DESCRIPTION_LIMIT = 8000;
 
 function roomProjectId() {
   return state.projectFilter || '';
@@ -17,14 +20,6 @@ function roomWorkflowLabel(w) {
 function activeRoom() {
   const rs = roomState();
   return (rs.items || []).find(item => item.id === rs.activeId) || null;
-}
-
-function roomGreeting() {
-  const hour = new Date().getHours();
-  const part = hour < 6 ? '凌晨好' : hour < 11 ? '早上好' : hour < 14 ? '中午好' : hour < 18 ? '下午好' : '晚上好';
-  const user = state.currentUser;
-  const name = user && !user.isGuest ? (user.chineseName || user.loginName || '') : '';
-  return name ? part + '，' + name : part;
 }
 
 function roomState() {
@@ -50,7 +45,32 @@ function bindRooms() {
   if (!create || create.dataset.bound) return;
   create.dataset.bound = '1';
   create.onclick = createRoom;
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden || state.currentView !== 'rooms') return;
+    refreshRoomMessages();
+    refreshRoomInbox();
+  });
   $('#renameRoom').onclick = renameRoom;
+  $('#roomDetails').onclick = () => openRoomPanel('details');
+  $('#roomInbox').onclick = () => openRoomPanel('inbox');
+  $('#roomPanelClose').onclick = () => closeRoomPanel(true);
+  $('#roomBack').onclick = () => {
+    history.pushState(null, '', roomHash());
+    closeRoomPanel();
+    openRoom('');
+  };
+  $('#roomNewMessages').onclick = () => {
+    if (roomState().anchored) {
+      openRoom(roomState().activeId);
+      return;
+    }
+    const log = $('#roomLog');
+    log.scrollTop = log.scrollHeight;
+    $('#roomNewMessages').hidden = true;
+  };
+  $('#roomPanel').addEventListener('keydown', event => {
+    if (event.key === 'Escape') closeRoomPanel(true);
+  });
   $('#roomModeChat').onclick = () => setRoomMode('chat');
   $('#roomModeIssue').onclick = () => setRoomMode('issue');
   form.onsubmit = event => {
@@ -63,15 +83,17 @@ function bindRooms() {
   };
   const input = $('#roomInput');
   input.addEventListener('keydown', event => {
+    if (event.keyCode === 229 || event.isComposing) return;
     if (roomMentionKey(event)) return;
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
       event.preventDefault();
       submitRoomComposer();
     }
   });
-  input.addEventListener('input', () => {
+  input.addEventListener('input', event => {
+    syncRoomDraft(input.value);
     syncRoomComposer();
-    updateRoomMention();
+    if (!event.isComposing) updateRoomMention();
   });
   input.addEventListener('click', updateRoomMention);
   document.addEventListener('mousedown', event => {
@@ -82,9 +104,7 @@ function bindRooms() {
     if (id) toggleRoomSOP(id, true);
     event.target.value = '';
   });
-  document.addEventListener('change', event => {
-    if (event.target?.id === 'projectSwitcher' && state.currentView === 'rooms') loadRooms();
-  });
+
 }
 
 function toggleRoomSOP(id, force) {
@@ -104,6 +124,23 @@ function roomTargetPicked() {
   return roomState().sops.length > 0;
 }
 
+function roomCodePointLength(value) {
+  return Array.from(String(value || '')).length;
+}
+
+function roomMessageLimitError(body) {
+  const length = roomCodePointLength(body);
+  return length > ROOM_MESSAGE_LIMIT ? `消息不能超过 ${ROOM_MESSAGE_LIMIT} 个字符（当前 ${length}）` : '';
+}
+
+function roomIssueLimitError(title, description) {
+  const titleLength = roomCodePointLength(title);
+  const descriptionLength = roomCodePointLength(description);
+  if (titleLength > ROOM_ISSUE_TITLE_LIMIT) return `Issue 标题不能超过 ${ROOM_ISSUE_TITLE_LIMIT} 个字符（当前 ${titleLength}）`;
+  if (descriptionLength > ROOM_ISSUE_DESCRIPTION_LIMIT) return `Issue 描述不能超过 ${ROOM_ISSUE_DESCRIPTION_LIMIT} 个字符（当前 ${descriptionLength}）`;
+  return '';
+}
+
 function syncRoomComposer() {
   const rs = roomState();
   const issue = rs.mode === 'issue';
@@ -118,6 +155,8 @@ function syncRoomComposer() {
   $('#roomComposer')?.classList.toggle('is-issue', issue);
   $('#roomModeChat')?.classList.toggle('on', !issue);
   $('#roomModeIssue')?.classList.toggle('on', issue);
+  $('#roomModeChat')?.setAttribute('aria-pressed', String(!issue));
+  $('#roomModeIssue')?.setAttribute('aria-pressed', String(issue));
   const input = $('#roomInput');
   if (input) input.placeholder = issue ? '第一行写 Issue 标题，下面写描述。输入 @ 选择 SOP' : '发消息，输入 @ 提醒同事';
   const picked = roomTargetPicked();
@@ -133,40 +172,112 @@ function syncRoomComposer() {
       : (rs.sops.length > 1 ? `回车将并行派给 ${rs.sops.length} 条 SOP。` : `回车将建单并派给 SOP「${names.get(rs.sops[0])}」。`);
   }
   $('#roomSend')?.classList.toggle('ready', !!input?.value.trim());
+  if ($('#roomSend')) $('#roomSend').disabled = !input?.value.trim() || !!roomDraft().sending;
   document.querySelectorAll('[data-room-pick]').forEach(button => {
     button.classList.toggle('picked', rs.sops.includes(button.dataset.roomPick));
   });
 }
 
-async function loadRooms() {
+function roomHash(id = '') {
+  return id ? '#/rooms/' + encodeURIComponent(id) : '#/rooms';
+}
+
+function stopRoomView() {
+  const rs = roomState();
+  rs.listRequest?.abort();
+  rs.threadRequest?.abort();
+  clearTimeout(roomsPollTimer);
+  closeRoomPanel();
+  closeRoomMention();
+}
+
+function currentRoomProject() {
+  return (state.data?.projects || []).find(item => item.id === roomProjectId());
+}
+
+function canManageRoomAutomation() {
+  const id = Number(state.currentUser?.id);
+  return id > 0 && (isPlatformAdmin() || Number(currentRoomProject()?.ownerId) === id);
+}
+
+function canWriteRoom() {
+  const project = currentRoomProject();
+  const id = Number(state.currentUser?.id);
+  if (!project) return false;
+  if (!state.authRequired || isPlatformAdmin() || Number(project.ownerId) === id) return true;
+  if (!project.ownerId && !(project.members || []).length) return true;
+  return (project.members || []).some(member => Number(member.userId) === id && member.role !== 'viewer');
+}
+
+async function loadRooms({route = false, projectChanged = false} = {}) {
   bindRooms();
   const rs = roomState();
-  const projectId = roomProjectId();
-  fillRoomTargets();
-  if (!projectId) {
+  rs.listRequest?.abort();
+  rs.threadRequest?.abort();
+  clearTimeout(roomsPollTimer);
+  const request = rs.listRequest = new AbortController();
+  const options = {silent: true, signal: request.signal};
+  if (projectChanged) history.replaceState(null, '', roomHash());
+  if (projectChanged || rs.projectId !== roomProjectId()) {
+    rs.items = [];
     renderRoomList([]);
     renderRoomThread(null, []);
-    renderRoomResources(null);
-    return;
+    closeRoomPanel();
+    $('#roomComposer').hidden = true;
+    $('#roomLayout').classList.remove('has-room');
   }
+  fillRoomTargets();
+  let projectId = roomProjectId();
+  const linked = route && routePart(0) === 'rooms' ? routePart(1) : '';
   try {
-    const rooms = await api('/api/rooms?projectId=' + encodeURIComponent(projectId), {silent: true});
+    if (linked && !rs.items.some(item => item.id === linked && item.projectId === projectId)) {
+      const room = await api('/api/rooms/' + encodeURIComponent(linked), options);
+      if (request.signal.aborted) return;
+      projectId = room.projectId;
+      state.projectFilter = projectId;
+      localStorage.setItem('agentflow.activeProject', projectId);
+      renderProjectSwitcher();
+      fillRoomTargets();
+    }
+    rs.projectId = projectId;
+    $('#newRoom').hidden = !canWriteRoom();
+    $('#roomInbox').disabled = !projectId;
+    if (!projectId) {
+      rs.items = [];
+      renderRoomList([]);
+      await openRoom('');
+      return;
+    }
+    const rooms = await api('/api/rooms?projectId=' + encodeURIComponent(projectId), options);
+    if (request.signal.aborted) return;
     rs.items = rooms || [];
-    if (!rs.items.some(room => room.id === rs.activeId)) rs.activeId = rs.items[0]?.id || '';
+    if (linked && !rs.items.some(room => room.id === linked)) throw new Error('找不到项目协作群');
+    const hasCurrent = rs.items.some(room => room.id === rs.activeId);
+    const narrow = matchMedia('(max-width: 700px)').matches;
+    const id = linked || (!narrow && (hasCurrent ? rs.activeId : rs.items[0]?.id)) || '';
     renderRoomList(rs.items);
-    await openRoom(rs.activeId);
+    await openRoom(id, {show: !!linked || !narrow});
+    if (!request.signal.aborted) refreshRoomInbox();
   } catch (error) {
-    toast(error.message);
+    if (!request.signal.aborted) {
+      rs.items = [];
+      renderRoomList([]);
+      await openRoom('');
+      roomViewError(error.message);
+    }
   }
 }
 
-// Poll faster while a dispatched run is still moving so progress feels live.
-// Idle rooms back off to 15s; the server only reloads runs whose revision moved.
 function scheduleRoomPoll() {
   clearTimeout(roomsPollTimer);
-  const delay = roomState().active ? 4000 : 15000;
+  const rs = roomState();
+  const delay = !rs.activeId ? 10000 : rs.active ? 4000 : 5000;
   roomsPollTimer = setTimeout(async () => {
-    if (state.currentView === 'rooms' && roomState().activeId && !document.hidden) await refreshRoomMessages();
+    if (state.currentView !== 'rooms') return;
+    if (!document.hidden) {
+      if (rs.activeId) await refreshRoomMessages();
+      await refreshRoomInbox();
+    }
     if (state.currentView === 'rooms') scheduleRoomPoll();
   }, delay);
 }
@@ -184,61 +295,155 @@ function renderRoomList(rooms) {
   if (count) count.textContent = String(rooms.length);
   if (!host) return;
   if (!rooms.length) {
-    host.innerHTML = '<div class="room-empty"><b>还没有群</b><p>点右上角 ＋ 建一个群</p></div>';
+    const note = roomProjectId() ? (canWriteRoom() ? '使用上方按钮创建协作群。' : '当前项目还没有协作群。') : '在顶栏选择项目后显示协作群。';
+    host.innerHTML = `<div class="room-empty"><p>${escapeHTML(note)}</p></div>`;
     return;
   }
-  host.innerHTML = rooms.map(room => `<button type="button" class="room-item ${room.id === roomState().activeId ? 'active' : ''}" data-room="${escapeHTML(room.id)}"><i>#</i><span>${escapeHTML(room.name)}</span><small title="群成员（即项目成员）">${(room.members || []).length} 人</small></button>`).join('');
+  host.innerHTML = rooms.map(room => `<button type="button" class="room-item ${room.id === roomState().activeId ? 'active' : ''}" data-room="${escapeHTML(room.id)}"><i>#</i><span data-i18n-skip>${escapeHTML(room.name)}</span><small title="群成员（即项目成员）">${(room.members || []).length} 人</small></button>`).join('');
   host.querySelectorAll('[data-room]').forEach(button => {
-    button.onclick = () => openRoom(button.dataset.room);
+    button.onclick = () => selectRoom(button.dataset.room);
   });
 }
 
-async function openRoom(id, keepScroll) {
+function selectRoom(id) {
+  if (location.hash !== roomHash(id)) history.pushState(null, '', roomHash(id));
+  openRoom(id);
+}
+
+function roomViewError(message) {
+  $('#roomLog').innerHTML = `<div class="room-empty-state"><h3>暂时无法读取协作群</h3><p>${escapeHTML(message)}</p><button type="button" class="button ghost small" data-room-retry>重试</button></div>`;
+  $('#roomLog [data-room-retry]').onclick = () => loadRooms({route: true});
+}
+
+async function openRoom(id, {show = !!id} = {}) {
   const rs = roomState();
+  const previous = rs.activeId;
+  rs.threadRequest?.abort();
+  clearTimeout(roomsPollTimer);
+  const request = rs.threadRequest = new AbortController();
   rs.activeId = id || '';
+  rs.anchored = false;
+  rs.historyLoaded = false;
+  rs.pendingNew = false;
+  rs.messages = [];
+  rs.hasMore = false;
+  rs.threadSignature = '';
+  $('#roomNewMessages').hidden = true;
+  if (previous !== id) {
+    rs.sops = [];
+    rs.mode = 'chat';
+    closeRoomMention();
+    $('#roomInput').value = roomDraft().body;
+  }
+  $('#roomLayout').classList.toggle('has-room', show && !!id);
   renderRoomList(rs.items || []);
-  const room = (rs.items || []).find(item => item.id === id);
+  const room = activeRoom();
   renderRoomResources(room);
-  const title = $('#roomTitle');
-  const subtitle = $('#roomSubtitle');
-  const rename = $('#renameRoom');
-  if (title) title.textContent = room?.name || '选择一个群';
-  if (subtitle) subtitle.textContent = room ? `${(room.members || []).length} 位项目成员` : '先在左侧选择或新建一个群';
-  if (rename) rename.hidden = !room;
+  const writable = canWriteRoom();
+  $('#roomTitle').toggleAttribute('data-i18n-skip', !!room);
+  $('#roomTitle').textContent = room?.name || '选择一个群';
+  $('#roomSubtitle').textContent = room ? lfT(`${(room.members || []).length} 位项目成员`, `${(room.members || []).length} project members`) : '';
+  $('#roomDetails').hidden = !room;
+  $('#renameRoom').hidden = !room || !writable;
+  $('#roomComposer').hidden = !room || !writable;
+  $('#roomReadonly').hidden = !room || writable;
+  syncRoomComposer();
   if (!id) {
     renderRoomThread(null, []);
+    if (roomProjectId()) scheduleRoomPoll();
     return;
   }
+  $('#roomLog').innerHTML = '<div class="room-empty-state" role="status">正在读取消息…</div>';
   try {
-    const messages = await api('/api/rooms/' + encodeURIComponent(id) + '/messages', {silent: true});
-    renderRoomThread(room, messages || [], keepScroll);
+    const list = await api('/api/rooms/' + encodeURIComponent(id) + '/messages', {silent: true, signal: request.signal});
+    if (request.signal.aborted) return;
+    rs.messages = list || [];
+    rs.hasMore = rs.messages.length >= 200;
+    renderRoomThread(room, rs.messages);
+    if (!$('#roomPanel').hidden && roomState().panel === 'details') renderRoomSettings();
   } catch (error) {
-    toast(error.message);
+    if (!request.signal.aborted) roomViewError(error.message);
   }
-  scheduleRoomPoll();
+  if (!request.signal.aborted) scheduleRoomPoll();
 }
 
-if (!window.__roomsVisibilityBound) {
-  window.__roomsVisibilityBound = true;
-  document.addEventListener('visibilitychange', () => {
-    if (!document.hidden && state.currentView === 'rooms' && roomState().activeId) {
-      refreshRoomMessages().then(scheduleRoomPoll);
-    }
-  });
+function announceRoom(message) {
+  $('#roomAnnouncement').textContent = message;
+}
+
+function roomAtBottom() {
+  const log = $('#roomLog');
+  return log.scrollHeight - log.scrollTop - log.clientHeight < 80;
 }
 
 async function refreshRoomMessages() {
   const rs = roomState();
   const id = rs.activeId;
-  const log = $('#roomLog');
-  if (!id || !log) return;
-  const near = log.scrollHeight - log.scrollTop - log.clientHeight < 80;
+  const request = rs.threadRequest;
+  if (!id || rs.anchored || !request || request.signal.aborted || rs.polling === request) return;
+  rs.polling = request;
   try {
-    const messages = await api('/api/rooms/' + encodeURIComponent(id) + '/messages', {silent: true});
-    if (rs.activeId !== id) return;
-    const room = (rs.items || []).find(item => item.id === id);
-    renderRoomThread(room, messages || [], !near);
-  } catch {}
+    const messages = await api('/api/rooms/' + encodeURIComponent(id) + '/messages', {silent: true, signal: request.signal});
+    if (request.signal.aborted || rs.anchored) return;
+    const near = roomAtBottom();
+    if (!rs.historyLoaded) rs.hasMore = messages.length >= 200;
+    const next = rs.historyLoaded ? mergeRoomMessages(rs.messages, messages) : messages;
+    const last = rs.messages.at(-1)?.id;
+    if (!near && last && next.at(-1)?.id !== last) {
+      rs.pendingNew = true;
+      $('#roomNewMessages').textContent = '有新消息 ↓';
+      $('#roomNewMessages').hidden = false;
+    }
+    rs.messages = next;
+    renderRoomThread(activeRoom(), next, !near);
+    announceRoom('');
+  } catch (error) {
+    if (!request.signal.aborted) {
+      if (error.status === 403 || error.status === 404) {
+        rs.messages = [];
+        $('#roomComposer').hidden = true;
+        closeRoomPanel();
+        roomViewError(error.message);
+      } else announceRoom('连接暂时中断，正在重试');
+    }
+  } finally {
+    if (rs.polling === request) rs.polling = null;
+  }
+}
+
+function mergeRoomMessages(previous, incoming) {
+  const byId = new Map(previous.map(message => [message.id, message]));
+  for (const message of incoming) byId.set(message.id, message);
+  const stamp = value => String(value || '').replace(/(\.\d+)?Z$/, (_, fraction) => (fraction || '.').padEnd(10, '0') + 'Z');
+  return [...byId.values()].sort((a, b) => stamp(a.createdAt).localeCompare(stamp(b.createdAt)) || String(a.id).localeCompare(b.id));
+}
+
+async function loadOlderRoomMessages() {
+  const rs = roomState();
+  const request = rs.threadRequest;
+  const id = rs.activeId;
+  const before = rs.messages[0]?.id;
+  if (!id || !before || !request || rs.loadingHistory === request) return;
+  rs.loadingHistory = request;
+  const log = $('#roomLog');
+  try {
+    const page = await api('/api/rooms/' + encodeURIComponent(id) + '/history?before=' + encodeURIComponent(before), {silent: true, signal: request.signal});
+    if (request.signal.aborted) return;
+    const anchor = [...log.querySelectorAll('[data-room-message]')].find(el => el.offsetTop + el.offsetHeight > log.scrollTop);
+    const offset = anchor ? anchor.offsetTop - log.scrollTop : 0;
+    rs.hasMore = page.hasMore;
+    rs.historyLoaded = true;
+    rs.messages = mergeRoomMessages(page.messages, rs.messages);
+    renderRoomThread(activeRoom(), rs.messages, true);
+    if (anchor) {
+      const current = log.querySelector('[data-room-message="' + CSS.escape(anchor.dataset.roomMessage) + '"]');
+      if (current) log.scrollTop = current.offsetTop - offset;
+    }
+  } catch (error) {
+    if (!request.signal.aborted) toast(error.message, 'err');
+  } finally {
+    if (rs.loadingHistory === request) rs.loadingHistory = null;
+  }
 }
 
 function roomResGroup(title, count, body) {
@@ -324,11 +529,11 @@ function renderRoomThread(room, messages, keepScroll) {
   rs.active = messages.some(m => m.kind === 'dispatch' && m.runId && !m.runFinal && !roomRunTerminal(m.runStatus || ''));
   // Polls usually return the same thread; skip the rebuild so open 产出摘要,
   // text selection and scroll position survive.
-  const signature = (room?.id || '') + '|' + JSON.stringify(messages);
+  const signature = (room?.id || '') + '|' + rs.hasMore + '|' + JSON.stringify(messages);
   if (signature === rs.threadSignature && log.childElementCount) return;
   rs.threadSignature = signature;
   if (!room) {
-    log.innerHTML = `<div class="room-hero"><h2>${escapeHTML(roomGreeting())}</h2><p>${roomProjectId() ? '在左侧新建或选择一个群开始协作' : '先在顶栏选择项目'}</p></div>`;
+    log.innerHTML = `<div class="room-empty-state"><h3>${roomProjectId() ? '选择一个协作群' : '请先选择项目'}</h3><p>${roomProjectId() ? '从群列表打开聊天记录。' : '在顶栏选择项目，查看它的协作群。'}</p></div>`;
     return;
   }
   const mine = Number(state.currentUser?.id) || 0;
@@ -339,17 +544,14 @@ function renderRoomThread(room, messages, keepScroll) {
     if (message.kind === 'progress' && !message.nodeId && dispatchRuns.has(message.runId)) return false;
     return true;
   });
-  log.innerHTML = visible.map(message => {
+  const older = rs.hasMore ? '<div class="room-history-more"><button type="button" class="button ghost small" id="roomOlder">加载更早的消息</button></div>' : '';
+  log.innerHTML = older + (visible.map(message => {
     const html = roomMessageHTML(message, mine, prevRun);
     if (['dispatch', 'progress', 'approval'].includes(message.kind)) prevRun = message;
     else if (message.kind !== 'decision') prevRun = null;
     return html;
-  }).join('') || roomGuideHTML();
-  log.querySelector('[data-room-try-chat]')?.addEventListener('click', () => setRoomMode('chat'));
-  log.querySelector('[data-room-try-issue]')?.addEventListener('click', () => {
-    setRoomMode('issue');
-    if (!roomTargetPicked()) openRoomMention({targetsOnly: true});
-  });
+  }).join('') || '<div class="room-empty-state"><h3>还没有消息</h3><p>给项目同事发一条消息，开始讨论。</p></div>');
+  $('#roomOlder')?.addEventListener('click', loadOlderRoomMessages);
   bindRoomGoSOPs(log);
   log.querySelectorAll('[data-open-issue]').forEach(button => {
     button.onclick = () => openIssueDetail(button.dataset.openIssue);
@@ -358,6 +560,7 @@ function renderRoomThread(room, messages, keepScroll) {
     button.onclick = () => { location.hash = '#/runs/' + encodeURIComponent(button.dataset.openRun); };
   });
   log.querySelectorAll('[data-decide]').forEach(button => {
+    button.disabled = !canWriteRoom();
     button.onclick = () => decideRoomStep(button.dataset.decide, button.dataset.run, button.dataset.node, button.dataset.name);
   });
   if (keepScroll) log.scrollTop = previous;
@@ -435,21 +638,28 @@ function roomMessageHTML(message, mine, prev) {
     case 'approval': return roomApprovalHTML(message);
     case 'decision': return `<div class="room-decision"><b>${author}</b> ${escapeHTML(message.body || '')}</div>`;
   }
-  return `<article class="room-message ${own ? 'mine' : ''}"><header>${author}</header><p>${roomTextHTML(message.body || '')}</p></article>`;
+  const user = userById(message.userId);
+  const avatar = user ? userAvatarHTML(user, 32) : escapeHTML(Array.from(message.author || '群')[0]);
+  const date = new Date(message.createdAt);
+  const time = Number.isNaN(date.valueOf()) ? '' : new Intl.DateTimeFormat(document.documentElement.lang || 'zh-CN', {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'}).format(date);
+  return `<article class="room-message room-human-message ${own ? 'mine' : ''}" data-room-message="${escapeHTML(message.id)}" tabindex="-1">
+    <span class="room-message-avatar" aria-hidden="true">${avatar}</span>
+    <div><header><strong data-i18n-skip>${author}</strong> <time>${escapeHTML(time)}</time></header><p data-i18n-skip>${roomTextHTML(message.body || '', message.mentions || [])}</p></div>
+  </article>`;
 }
 
-// roomTextHTML escapes a chat line and highlights @mentions; mentions of the
-// current user get an extra class so they stand out.
-function roomTextHTML(text) {
-  const me = String(state.currentUser?.loginName || '').toLowerCase();
-  const names = (activeRoom()?.members || []).map(m => escapeHTML(m.name || '')).filter(Boolean)
-    .sort((a, b) => b.length - a.length)
-    .map(name => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-  const pattern = new RegExp(`(^|\\s)@(${names.length ? names.join('|') + '|' : ''}[A-Za-z0-9_.-]+)`, 'g');
-  return escapeHTML(text).replace(pattern, (all, lead, name) => {
-    const mine = me && name.toLowerCase().startsWith(me);
-    return `${lead}<span class="room-at${mine ? ' me' : ''}">@${name}</span>`;
-  });
+function roomTextHTML(text, mentions) {
+  const characters = Array.from(text);
+  const currentId = Number(state.currentUser?.id);
+  let next = 0;
+  let html = '';
+  for (const mention of mentions) {
+    html += escapeHTML(characters.slice(next, mention.start).join(''));
+    const label = escapeHTML(characters.slice(mention.start, mention.end).join(''));
+    html += `<span class="room-at${currentId === Number(mention.userId) ? ' me' : ''}">${label}</span>`;
+    next = mention.end;
+  }
+  return html + escapeHTML(characters.slice(next).join(''));
 }
 
 function roomNoSOPHint() {
@@ -460,19 +670,6 @@ function bindRoomGoSOPs(host) {
   host?.querySelectorAll('[data-room-go-sops]').forEach(button => {
     button.onclick = () => switchView('sops');
   });
-}
-
-function roomGuideHTML() {
-  const noSOP = !roomWorkflowChoices().length;
-  return `<div class="room-guide">
-    <h2>${escapeHTML(roomGreeting())}</h2>
-    <p class="room-guide-lead">在这里聊天，或者把一条需求派给 SOP。角色写在流程里，不用再选。</p>
-    <ol>
-      <li><b>聊天</b><span>回车发送，Shift+Enter 换行。<code>@</code> 用来提醒同事。</span></li>
-      <li><b>建单</b><span>切到「建单」，选一条或多条 SOP，第一行写标题，回车就派发。</span></li>
-    </ol>
-    <div class="room-guide-actions"><button type="button" class="button ghost small" data-room-try-chat>发一条消息</button><button type="button" class="button primary small" data-room-try-issue>建一张单</button>${noSOP ? '<button type="button" class="button ghost small" data-room-go-sops>当前项目还没有 SOP，去流程模板</button>' : ''}</div>
-  </div>`;
 }
 
 function roomMentionState() {
@@ -497,9 +694,13 @@ function roomMentionItems(query, targetsOnly) {
       if (hit(w.name, w.id)) items.push({kind: 'sop', id: w.id, name: roomWorkflowLabel(w), sub: (w.nodes || []).length ? w.nodes.length + ' 个步骤，派发后立即运行' : '派发后立即运行'});
     });
   }
-  if (!targetsOnly) {
+  if (!targetsOnly && !wantSOP) {
     (activeRoom()?.members || []).forEach(m => {
-      if (hit(m.name)) items.push({kind: 'member', id: String(m.userId), name: m.name || '用户 ' + m.userId, sub: roomMemberRoleLabel(m.role)});
+      const user = userById(m.userId);
+      const name = user?.chineseName || m.displayName || m.name || '用户 ' + m.userId;
+      const login = user?.loginName || m.loginName || '';
+      if (hit(name, login, m.name)) items.push({kind: 'member', id: String(m.userId), name, sub: [login, roomMemberRoleLabel(m.role)].filter(Boolean).join(' · ')});
+
     });
   }
   return items.slice(0, 40);
@@ -522,6 +723,8 @@ function closeRoomMention() {
   ms.open = false;
   const box = $('#roomMention');
   if (box) box.hidden = true;
+  $('#roomInput')?.setAttribute('aria-expanded', 'false');
+  $('#roomInput')?.removeAttribute('aria-activedescendant');
 }
 
 function updateRoomMention() {
@@ -543,11 +746,15 @@ function renderRoomMention(query) {
     if (!rows.length && !(kind === 'sop' && !query && !roomWorkflowChoices().length)) return;
     html += `<div class="room-mention-group">${escapeHTML(label)}</div>`;
     if (!rows.length) html += roomNoSOPHint();
-    html += rows.map(({item, index}) => `<button type="button" class="room-mention-item ${index === ms.index ? 'active' : ''}" data-mention="${index}"><span class="room-res-icon ${item.kind === 'member' ? '' : item.kind}">${escapeHTML(item.kind === 'sop' ? '≡' : (item.name || '?').slice(0, 1))}</span><span><b>${escapeHTML(item.name)}</b><small>${escapeHTML(item.sub || '')}</small></span></button>`).join('');
+    html += rows.map(({item, index}) => `<button type="button" class="room-mention-item ${index === ms.index ? 'active' : ''}" data-mention="${index}" id="room-member-suggestion-${index}" role="option" aria-selected="${index === ms.index}"><span class="room-res-icon ${item.kind === 'member' ? '' : item.kind}">${escapeHTML(item.kind === 'sop' ? '≡' : (item.name || '?').slice(0, 1))}</span><span><b>${escapeHTML(item.name)}</b><small>${escapeHTML(item.sub || '')}</small></span></button>`).join('');
   });
   if (!ms.items.length && !html.includes('room-mention-group')) html += `<div class="room-mention-empty">没有匹配「${escapeHTML(query)}」的${roomState().mode === 'issue' || ms.targetsOnly ? ' SOP 或成员' : '成员'}</div>`;
   box.innerHTML = html;
   box.hidden = false;
+  const input = $('#roomInput');
+  input.setAttribute('aria-expanded', 'true');
+  if (ms.items.length) input.setAttribute('aria-activedescendant', 'room-member-suggestion-' + ms.index);
+  else input.removeAttribute('aria-activedescendant');
   box.querySelectorAll('[data-mention]').forEach(button => {
     button.onmousedown = event => event.preventDefault();
     button.onclick = () => pickRoomMention(ms.items[Number(button.dataset.mention)]);
@@ -572,7 +779,8 @@ function roomMentionKey(event) {
     renderRoomMention(roomMentionToken($('#roomInput'))?.query || '');
     return true;
   }
-  if ((event.key === 'Enter' && !event.shiftKey) || event.key === 'Tab') {
+  if (event.key === 'Tab') { closeRoomMention(); return false; }
+  if (event.key === 'Enter' && !event.shiftKey) {
     event.preventDefault();
     pickRoomMention(ms.items[ms.index]);
     return true;
@@ -588,6 +796,12 @@ function pickRoomMention(item) {
     const caret = input.selectionStart;
     const insert = item.kind === 'member' ? '@' + item.name + ' ' : '';
     input.value = input.value.slice(0, ms.start) + insert + input.value.slice(caret).replace(/^ /, insert ? '' : '');
+    syncRoomDraft(input.value);
+    if (item.kind === 'member') {
+      const draft = roomDraft();
+      draft.mentions.push({userId: Number(item.id), start: ms.start, end: ms.start + insert.length - 1});
+      draft.mentions.sort((a, b) => a.start - b.start);
+    }
     const next = ms.start + insert.length;
     input.setSelectionRange(next, next);
   }
@@ -645,8 +859,9 @@ async function createRoom() {
   if (!name || !String(name).trim()) return;
   try {
     const room = await api('/api/rooms', {method: 'POST', body: JSON.stringify({projectId, name: String(name).trim()})});
-    roomState().activeId = room.id;
-    await loadRooms();
+    roomState().items.unshift(room);
+    history.pushState(null, '', roomHash(room.id));
+    await loadRooms({route: true});
     toast('已创建协作群');
   } catch (error) {
     toast(error.message);
@@ -658,26 +873,79 @@ function submitRoomComposer() {
   else sendRoomMessage();
 }
 
+function roomDraft(id = roomState().activeId) {
+  const rs = roomState();
+  rs.drafts ||= new Map();
+  if (!rs.drafts.has(id)) rs.drafts.set(id, {body: '', mentions: [], clientId: ''});
+  return rs.drafts.get(id);
+}
+
+function reconcileRoomMentions(before, after, mentions) {
+  let start = 0;
+  while (start < before.length && start < after.length && before[start] === after[start]) start++;
+  let tail = 0;
+  while (tail < before.length - start && tail < after.length - start && before[before.length - 1 - tail] === after[after.length - 1 - tail]) tail++;
+  const end = before.length - tail;
+  const delta = after.length - before.length;
+  return mentions.flatMap(mention => {
+    if (mention.end <= start) return [mention];
+    if (mention.start >= end) return [{...mention, start: mention.start + delta, end: mention.end + delta}];
+    return [];
+  });
+}
+
+function syncRoomDraft(value) {
+  const draft = roomDraft();
+  if (draft.body === value) return;
+  draft.mentions = reconcileRoomMentions(draft.body, value, draft.mentions);
+  draft.body = value;
+  draft.clientId = '';
+}
+
 async function sendRoomMessage() {
   const id = roomState().activeId;
+  if (!id || !canWriteRoom()) return;
   const input = $('#roomInput');
-  const body = input?.value.trim();
-  if (!id) return toast('先选择一个群');
-  if (!body) return;
+  const button = $('#roomSend');
+  syncRoomDraft(input.value);
+  const draft = roomDraft(id);
+  if (draft.sending || !draft.body.trim()) return;
+  const body = draft.body;
+  const limitError = roomMessageLimitError(body);
+  if (limitError) return toast(limitError, 'err');
+  const mentions = draft.mentions.map(mention => ({
+    userId: mention.userId,
+    start: Array.from(body.slice(0, mention.start)).length,
+    end: Array.from(body.slice(0, mention.end)).length
+  }));
+  draft.clientId ||= globalThis.crypto?.randomUUID?.() || (Date.now().toString(36) + '-' + Math.random().toString(36).slice(2));
+  const clientId = draft.clientId;
+  draft.sending = true;
+  button.disabled = true;
   try {
-    await api('/api/rooms/' + encodeURIComponent(id) + '/messages', {method: 'POST', body: JSON.stringify({body})});
-    input.value = '';
-    closeRoomMention();
-    syncRoomComposer();
-    await openRoom(id);
+    await api('/api/rooms/' + encodeURIComponent(id) + '/messages', {method: 'POST', body: JSON.stringify({body, mentions, clientId})});
+    if (draft.clientId === clientId) {
+      draft.body = '';
+      draft.mentions = [];
+      draft.clientId = '';
+      if (roomState().activeId === id) input.value = '';
+    }
+    if (state.currentView === 'rooms' && roomState().activeId === id) {
+      closeRoomMention();
+      await refreshRoomMessages();
+      syncRoomComposer();
+    }
   } catch (error) {
-    toast(error.message);
+    toast(error.message, 'err');
+  } finally {
+    draft.sending = false;
+    if (roomState().activeId === id) syncRoomComposer();
   }
 }
 
 function splitRoomIssueText(text) {
   const lines = String(text || '').split('\n');
-  const title = (lines.shift() || '').trim().slice(0, 200);
+  const title = (lines.shift() || '').trim();
   return {title, description: lines.join('\n').trim()};
 }
 
@@ -688,12 +956,16 @@ async function dispatchRoomIssue() {
   const {title, description} = splitRoomIssueText($('#roomInput')?.value);
   const workflowIds = rs.sops.slice();
   if (!title) return toast('第一行写 Issue 标题');
+  const limitError = roomIssueLimitError(title, description);
+  if (limitError) return toast(limitError, 'err');
   if (!workflowIds.length) return toast('请选择要派发的 SOP');
   const button = $('#roomDispatch');
   button.disabled = true;
   try {
     const result = await api('/api/rooms/' + encodeURIComponent(id) + '/issues', {method: 'POST', body: JSON.stringify({title, description, workflowIds})});
+    if (state.currentView !== 'rooms' || rs.activeId !== id) return;
     $('#roomInput').value = '';
+    syncRoomDraft('');
     rs.sops = [];
     rs.mode = 'chat';
     closeRoomMention();
@@ -715,5 +987,168 @@ async function dispatchRoomIssue() {
   }
 }
 
-bindRooms();
-if ((state.currentView || activeViewName()) === 'rooms') loadRooms();
+
+function closeRoomPanel(restoreFocus = false) {
+  const panel = $('#roomPanel');
+  if (!panel) return;
+  panel.hidden = true;
+  $('#roomLayout').classList.remove('has-panel');
+  $('#roomDetails').setAttribute('aria-expanded', 'false');
+  if (restoreFocus) (roomState().panel === 'inbox' ? $('#roomInbox') : $('#roomDetails')).focus();
+}
+
+function openRoomPanel(mode) {
+  roomState().panel = mode;
+  $('#roomPanel').hidden = false;
+  $('#roomLayout').classList.add('has-panel');
+  $('#roomPanelTitle').textContent = mode === 'inbox' ? '提到我' : '成员与设置';
+  $('#roomInboxList').hidden = mode !== 'inbox';
+  $('#roomPanelDetails').hidden = mode === 'inbox';
+  $('#roomDetails').setAttribute('aria-expanded', String(mode === 'details'));
+  $('#roomPanelClose').focus();
+  if (mode === 'inbox') refreshRoomInbox();
+  else renderRoomSettings();
+}
+
+async function refreshRoomInbox() {
+  const rs = roomState();
+  const project = roomProjectId();
+  const request = rs.listRequest;
+  if (!project || !request || request.signal.aborted) return;
+  try {
+    const data = await api('/api/room-mentions?projectId=' + encodeURIComponent(project), {silent: true, signal: request.signal});
+    if (request.signal.aborted || roomProjectId() !== project) return;
+    const badge = $('#roomInboxCount');
+    badge.hidden = !data.unread;
+    badge.textContent = data.unread > 99 ? '99+' : String(data.unread || '');
+    const list = $('#roomInboxList');
+    const signature = JSON.stringify(data.mentions);
+    if (list.dataset.signature === signature) return;
+    list.dataset.signature = signature;
+    list.innerHTML = (data.mentions || []).map((notice, index) => `<button type="button" class="room-inbox-item" data-room-notice="${index}"><span><b>${escapeHTML(notice.roomName)}</b>${notice.read ? '' : '<span class="room-unread-dot" aria-label="未读"></span>'}</span><strong data-i18n-skip>${escapeHTML(notice.message.author || '群成员')}</strong><small data-i18n-skip>${escapeHTML(notice.message.body || '')}</small></button>`).join('') ||
+      '<p class="room-panel-empty">还没有人提到你。</p>';
+    list.querySelectorAll('[data-room-notice]').forEach(button => {
+      button.onclick = () => openRoomNotice(data.mentions[Number(button.dataset.roomNotice)]);
+    });
+  } catch (error) {
+    if (!request.signal.aborted && rs.panel === 'inbox') {
+      $('#roomInboxList').textContent = error.message;
+      delete $('#roomInboxList').dataset.signature;
+    }
+  }
+}
+
+async function openRoomNotice(notice) {
+  const id = notice.roomId;
+  const messageId = notice.message.id;
+  if (!roomState().items.some(room => room.id === id)) return;
+  if (location.hash !== roomHash(id)) history.pushState(null, '', roomHash(id));
+  await openRoom(id);
+  const rs = roomState();
+  const request = rs.threadRequest;
+  if (rs.activeId !== id || request.signal.aborted) return;
+  const path = '/api/rooms/' + encodeURIComponent(id);
+  const options = {silent: true, signal: request.signal};
+  const selector = '[data-room-message="' + CSS.escape(messageId) + '"]';
+  try {
+    if (!$(selector)) {
+      rs.anchored = true;
+      const [item, page] = await Promise.all([
+        api(path + '/messages/' + encodeURIComponent(messageId), options),
+        api(path + '/history?before=' + encodeURIComponent(messageId), options)
+      ]);
+      if (request.signal.aborted) return;
+      rs.messages = [...page.messages, item];
+      rs.hasMore = page.hasMore;
+      renderRoomThread(activeRoom(), rs.messages, true);
+      $('#roomNewMessages').textContent = '回到最新消息 ↓';
+      $('#roomNewMessages').hidden = false;
+    }
+    closeRoomPanel();
+    const item = $(selector);
+    item?.classList.add('is-highlighted');
+    item?.scrollIntoView({block: 'center'});
+    item?.focus({preventScroll: true});
+    await api(path + '/mentions/' + encodeURIComponent(messageId) + '/read', {...options, method: 'PUT'});
+    await refreshRoomInbox();
+  } catch (error) {
+    if (!request.signal.aborted) toast(error.message, 'err');
+  }
+}
+
+async function renderRoomSettings() {
+  const room = activeRoom();
+  const el = $('#roomSettings');
+  el.replaceChildren();
+  if (!room) return;
+  const signal = roomState().threadRequest?.signal;
+  const path = '/api/rooms/' + encodeURIComponent(room.id) + '/discussion-settings';
+  const projectPath = '/api/projects/' + encodeURIComponent(room.projectId);
+  const userId = Number(state.currentUser?.id);
+  const selfPath = projectPath + '/test-employees/' + userId + '/pause';
+  try {
+    const [settings, self] = await Promise.all([
+      api(path, {silent: true, signal}),
+      userId > 0 ? api(selfPath, {silent: true, signal}).catch(() => null) : null
+    ]);
+    if (signal?.aborted || activeRoom()?.id !== room.id) return;
+    const section = document.createElement('section');
+    section.className = 'room-settings-section';
+    section.innerHTML = '<h4>自动讨论</h4><p class="room-settings-summary"></p>';
+    section.querySelector('p').textContent = settings.enabled ? lfT(`已启用 · 每轮最多 ${settings.replyLimit} 条自动回复`, `Enabled · up to ${settings.replyLimit} replies per round`) : '已关闭';
+    el.append(section);
+    const project = currentRoomProject();
+    const hasMembership = userId > 0 && (canManageRoomAutomation() || (project?.members || []).some(member => Number(member.userId) === userId));
+    if (hasMembership) {
+      const sharing = document.createElement('button');
+      sharing.type = 'button';
+      sharing.className = 'button ghost small';
+      sharing.textContent = '我的共享连接';
+      sharing.onclick = () => openEmployeeConnectionSharing(room.projectId);
+      el.append(sharing);
+    }
+    if (canManageRoomAutomation()) {
+      const form = document.createElement('form');
+      form.className = 'room-settings-form';
+      form.innerHTML = `<label class="room-switch"><input name="enabled" type="checkbox" role="switch"${settings.enabled ? ' checked' : ''}> 在此群启用</label>
+        <label>连续回复上限<input name="replyLimit" class="input" type="number" min="1" max="12" value="${Number(settings.replyLimit) || 4}" required></label>
+        <p class="room-field-note">启用后，已配置的员工模型可读取本群近期讨论。</p>
+        <button type="submit" class="button primary small">保存群设置</button>`;
+      form.onsubmit = async event => {
+        event.preventDefault();
+        const button = form.querySelector('button');
+        button.disabled = true;
+        try {
+          await api(path, {method: 'PUT', body: JSON.stringify({enabled: form.elements.enabled.checked, replyLimit: Number(form.elements.replyLimit.value)})});
+          toast('群设置已保存', 'ok');
+          if (activeRoom()?.id === room.id) renderRoomSettings();
+        } catch (error) {
+          toast(error.message, 'err');
+        } finally {
+          button.disabled = false;
+        }
+      };
+      section.append(form);
+    }
+    if (self) {
+      const handover = document.createElement('button');
+      handover.type = 'button';
+      handover.className = 'button ghost small';
+      handover.textContent = self.paused ? '恢复我的自动参与' : '暂停我的自动参与';
+      handover.onclick = async () => {
+        handover.disabled = true;
+        try {
+          await api(selfPath, {method: 'PUT', body: JSON.stringify({paused: !self.paused})});
+          await renderRoomSettings();
+        } catch (error) {
+          toast(error.message, 'err');
+        } finally {
+          handover.disabled = false;
+        }
+      };
+      section.append(handover);
+    }
+  } catch (error) {
+    if (!signal?.aborted) el.textContent = error.message;
+  }
+}

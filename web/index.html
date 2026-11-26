@@ -40,6 +40,8 @@
   <link rel="stylesheet" href="/app/sops-harness.css">
   <link rel="stylesheet" href="/app/sop-catalog.css">
   <link rel="stylesheet" href="/app/observability-harness.css?v=20261030obs1">
+  <link rel="stylesheet" href="/app/rooms.css">
+  <link rel="stylesheet" href="/app/test-employees.css">
   <link rel="stylesheet" href="/app/topbar-harness.css?v=20261030tb1">
   <link rel="stylesheet" href="/app/approvals-harness.css?v=20261030ap1">
   <style>
@@ -77,6 +79,11 @@
       <button class="rail-btn nav" data-view="collaboration" data-tooltip="AI 工作台" aria-label="AI 工作台">
         <svg class="agent-icon harness-icon" data-icon="home-start" data-icon-motion="idle" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m3.5 10 7.3-6a1.9 1.9 0 0 1 2.4 0l7.3 6"/><path d="M5.5 8.4v10.1A1.5 1.5 0 0 0 7 20h3v-5a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v5h3a1.5 1.5 0 0 0 1.5-1.5V8.4"/></svg>
         <span class="rail-label">AI 工作台</span>
+      </button>
+
+      <button class="rail-btn nav" data-view="rooms" data-tooltip="协作群" aria-label="协作群">
+        <svg class="agent-icon harness-icon" aria-hidden="true" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11.5a6.5 6.5 0 0 1-6.5 6.5H9l-5 3v-5.2a6.5 6.5 0 0 1 4-11.3h5.5a6.5 6.5 0 0 1 6.5 7Z"/><path d="M8 11h8m-8 3h5"/></svg>
+        <span class="rail-label">协作群</span>
       </button>
 
       <!-- 2. 统计 -->
@@ -651,6 +658,51 @@
       <div id="obsExpand" class="obs-expand" hidden role="dialog" aria-modal="true" aria-label="放大查看"><div class="obs-expand-box" tabindex="-1"></div></div>
     </section>
     <!-- 项目与成员 -->
+    <section id="roomsView" class="view room-view" aria-label="协作群">
+      <div class="room-layout" id="roomLayout">
+        <aside class="room-sidebar" aria-label="协作群列表">
+          <div class="room-side-head"><h1>协作群</h1><button class="button hui-icon-btn" type="button" id="newRoom" aria-label="新建协作群" title="新建协作群">＋</button></div>
+          <button class="room-inbox-trigger" type="button" id="roomInbox"><span aria-hidden="true">@</span> 提到我 <span class="room-inbox-count" id="roomInboxCount" hidden></span></button>
+          <div id="roomList" class="room-list"></div>
+        </aside>
+        <main class="room-main">
+          <div class="room-top">
+            <button type="button" class="button hui-icon-btn room-list-back" id="roomBack" aria-label="返回群列表">‹</button>
+            <div class="room-heading"><h2 id="roomTitle">选择一个群</h2><p id="roomSubtitle"></p></div>
+            <button type="button" class="button ghost small" id="roomDetails" aria-controls="roomPanel" aria-expanded="false" hidden>成员与设置</button>
+          </div>
+          <div class="room-timeline">
+            <div id="roomLog" class="room-log" tabindex="0" aria-label="聊天记录"></div>
+            <button type="button" class="button small room-new-messages" id="roomNewMessages" hidden>有新消息 ↓</button>
+          </div>
+          <div id="roomReadonly" class="room-readonly" hidden>你在该项目中拥有只读权限。</div>
+          <form id="roomComposer" class="room-composer-box" hidden>
+            <div id="roomMention" class="room-mention" hidden role="listbox" aria-label="提及对象"></div>
+            <textarea id="roomInput" rows="2" aria-label="消息" aria-controls="roomMention" aria-expanded="false"></textarea>
+            <div class="room-compose-actions">
+              <button type="button" id="roomModeChat" class="button ghost small" aria-pressed="true">聊天</button>
+              <button type="button" id="roomModeIssue" class="button ghost small" aria-pressed="false">派 SOP</button>
+              <select id="roomSOP" aria-label="添加 SOP" hidden></select>
+              <div id="roomSOPPicks" class="room-sop-picks"></div>
+              <button type="submit" class="button primary small" id="roomSend">发送</button>
+              <button type="button" class="button primary small" id="roomDispatch">建单并派发</button>
+            </div>
+            <p id="roomTargetHint"></p>
+          </form>
+          <div class="room-announcement" id="roomAnnouncement" role="status"></div>
+        </main>
+        <aside id="roomPanel" class="room-panel" aria-label="协作群详情" hidden>
+          <div class="room-side-head"><h3 id="roomPanelTitle">成员与设置</h3><button type="button" class="button hui-icon-btn" id="roomPanelClose" aria-label="关闭详情">×</button></div>
+          <div id="roomInboxList" class="room-panel-body" hidden></div>
+          <div id="roomPanelDetails" class="room-panel-body">
+            <div id="roomResources"></div>
+            <div id="roomSettings"></div>
+            <button type="button" class="button ghost small" id="renameRoom" hidden>重命名协作群</button>
+          </div>
+        </aside>
+      </div>
+    </section>
+
     <section id="projectsView" class="view page-view">
       <div id="projectListView" class="pa-level">
         <header class="pa-ph">
@@ -1287,6 +1339,8 @@
   <script src="/app/sops.js"></script>
   <script src="/app/issue-model.js"></script>
   <script src="/app/projects.js"></script>
+  <script src="/app/test-employees.js"></script>
+  <script src="/app/rooms.js"></script>
   <script src="/app/github-connect.js"></script>
   <script src="/app/project-wizard.js"></script>
   <script src="/app/repo_drawer.js"></script>

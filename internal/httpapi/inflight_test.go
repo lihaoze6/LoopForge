@@ -120,6 +120,40 @@ func TestBackgroundControlsAreNilSafeAndRecordHandover(t *testing.T) {
 	}
 }
 
+func TestBackgroundEmployeeStopClaimingKeepsRunningWork(t *testing.T) {
+	bg := &Background{}
+	claimStopped := make(chan struct{})
+	runFinished := make(chan struct{})
+	bg.startEmployeeWorker(context.Background(), func(claimCtx, runCtx context.Context) {
+		<-claimCtx.Done()
+		close(claimStopped)
+		<-runCtx.Done()
+		close(runFinished)
+	})
+	bg.StopClaiming()
+	select {
+	case <-claimStopped:
+	case <-time.After(2 * time.Second):
+		t.Fatal("claim context was not cancelled")
+	}
+	select {
+	case <-runFinished:
+		t.Fatal("stop claiming cancelled running work")
+	case <-time.After(30 * time.Millisecond):
+	}
+	waitCtx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	if err := bg.WaitInflight(waitCtx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("drain returned before work stopped: %v", err)
+	}
+	bg.Stop()
+	select {
+	case <-runFinished:
+	case <-time.After(2 * time.Second):
+		t.Fatal("stop did not cancel running work")
+	}
+}
+
 func TestAssistantSSEStreamsGenerationOwnedByAnotherProcess(t *testing.T) {
 	old := assistantPersistedPollInterval
 	assistantPersistedPollInterval = 20 * time.Millisecond

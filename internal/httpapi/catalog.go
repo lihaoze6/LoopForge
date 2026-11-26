@@ -65,6 +65,7 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 		for _, p := range h.repo.Projects() {
 			if p.DefaultRepositoryID == id {
 				p.DefaultRepositoryID = ""
+				p.Members = nil
 				_ = h.repo.PutProject(p)
 			}
 		}

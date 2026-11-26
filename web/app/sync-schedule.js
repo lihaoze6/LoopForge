@@ -791,7 +791,7 @@ async function saveSyncConfig(){
     state.data.syncConfig=saved;
     $('#syncAutoEnabledInline').checked=saved.autoSyncEnabled;
     if(project){
-      const updated=await api('/api/projects',{method:'PUT',body:JSON.stringify({...project,tapdWorkspaceId:tapdWs,tapdIterationId:tapdIt})});
+      const updated=await api('/api/projects',{method:'PUT',body:JSON.stringify({...project,tapdWorkspaceId:tapdWs,tapdIterationId:tapdIt,members:undefined,membersVersion:undefined})});
       const idx=(state.data.projects||[]).findIndex(p=>p.id===updated.id);
       if(idx>=0)state.data.projects[idx]=updated;
     }

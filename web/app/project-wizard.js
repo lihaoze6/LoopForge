@@ -153,7 +153,7 @@ async function projectWizardSaveProject(){
   const value=buildProjectPayload(clone(saved),fields);
   const invalid=validateProjectPayload(value,{creating:false,projects:state.data.projects||[],workflows:state.data.workflows||[],saved});
   if(invalid)return projectWizardFail(invalid.message);
-  const stored=await projectWizardRequest(async()=>storeSavedProject(await api('/api/projects',{method:'PUT',body:JSON.stringify(value)}),value));
+  const stored=await projectWizardRequest(async()=>storeSavedProject(await api('/api/projects',{method:'PUT',body:JSON.stringify(projectSaveBody(value,w.base||saved))}),value));
   if(stored)renderAll();
   return !!stored;
 }

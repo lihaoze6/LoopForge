@@ -1,6 +1,9 @@
 package repo
 
 import (
+	"crypto/sha256"
+	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -10,7 +13,16 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-// ---------- Projects ----------
+var ErrProjectMembersConflict = errors.New("项目成员已变化，请刷新项目后重试")
+
+func projectMembersVersion(ownerID int64, members []domain.ProjectMember) string {
+	hash := sha256.New()
+	fmt.Fprintf(hash, "%d\n", ownerID)
+	for _, member := range members {
+		fmt.Fprintf(hash, "%d:%q\n", member.UserID, member.Role)
+	}
+	return fmt.Sprintf("%x", hash.Sum(nil))
+}
 
 func (r *ProjectsRepo) lockProjectInTx(tx *gorm.DB, id string) error {
 	var row projectRow
@@ -51,6 +63,7 @@ func (r *ProjectsRepo) Projects() []domain.Project {
 		if project.Members == nil {
 			project.Members = []domain.ProjectMember{}
 		}
+		project.MembersVersion = projectMembersVersion(project.OwnerID, project.Members)
 		out = append(out, project)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
@@ -76,6 +89,7 @@ func (r *ProjectsRepo) Project(id string) (domain.Project, bool) {
 		project.UpdatedAt = *row.Updated
 	}
 	project.Members = r.projectMembers(project.ID)
+	project.MembersVersion = projectMembersVersion(project.OwnerID, project.Members)
 	return project, true
 }
 
@@ -148,35 +162,38 @@ func (r *ProjectsRepo) SetProjectArchived(id string, at *time.Time, by int64) er
 }
 
 func (r *ProjectsRepo) PutProject(v domain.Project) error {
-	now := time.Now().UTC()
-	if old, ok := r.Project(v.ID); ok {
-		if v.OwnerID == 0 {
-			v.OwnerID = old.OwnerID
-		}
-		if v.Members == nil {
-			v.Members = old.Members
-		}
-		v.CreatedAt = old.CreatedAt
-	} else {
-		v.CreatedAt = now
-	}
-	v.UpdatedAt = now
-	return r.writeProject(v)
-}
-
-func (r *ProjectsRepo) writeProject(v domain.Project) error {
-	payload := v
-	payload.Members = nil
-	payload.GitToken, payload.CodeBuddyAPIKey = "", ""
-	var owner any
-	if v.OwnerID > 0 {
-		owner = v.OwnerID
-	}
 	return r.DB.Transaction(func(tx *gorm.DB) error {
 		var current projectRow
 		err := r.locking(tx).Where("id = ?", v.ID).Take(&current).Error
-		if err != nil && err != gorm.ErrRecordNotFound {
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
+		}
+		now := time.Now().UTC()
+		v.CreatedAt, v.UpdatedAt = now, now
+		if err == nil {
+			var ownerID int64
+			if current.OwnerUserID != nil {
+				ownerID = *current.OwnerUserID
+			}
+			if v.Members != nil && v.MembersVersion != "" {
+				scoped := &ProjectsRepo{deps: &deps{DB: tx}}
+				if v.MembersVersion != projectMembersVersion(ownerID, scoped.projectMembers(v.ID)) {
+					return ErrProjectMembersConflict
+				}
+			}
+			if v.OwnerID == 0 {
+				v.OwnerID = ownerID
+			}
+			if current.Created != nil {
+				v.CreatedAt = *current.Created
+			}
+		}
+		payload := v
+		payload.Members, payload.MembersVersion = nil, ""
+		payload.GitToken, payload.CodeBuddyAPIKey = "", ""
+		var owner any
+		if v.OwnerID > 0 {
+			owner = v.OwnerID
 		}
 		// Only SetProjectBusinessDomain owns the assignment, even for stale project payloads.
 		v.BusinessDomainID = current.BusinessDomainID
@@ -187,21 +204,23 @@ func (r *ProjectsRepo) writeProject(v domain.Project) error {
 		}); err != nil {
 			return err
 		}
-		if err := tx.Where("project_id = ?", v.ID).Delete(&projectMemberRow{}).Error; err != nil {
-			return err
-		}
-		for _, member := range v.Members {
-			if member.UserID <= 0 {
-				continue
-			}
-			role := strings.TrimSpace(member.Role)
-			if role == "" {
-				role = "member"
-			}
-			if err := tx.Clauses(clause.OnConflict{UpdateAll: true}).Create(&projectMemberRow{
-				ProjectID: v.ID, UserID: member.UserID, Role: role, Created: timePtr(time.Now().UTC()),
-			}).Error; err != nil {
+		if v.Members != nil {
+			if err := tx.Where("project_id = ?", v.ID).Delete(&projectMemberRow{}).Error; err != nil {
 				return err
+			}
+			for _, member := range v.Members {
+				if member.UserID <= 0 {
+					continue
+				}
+				role := strings.TrimSpace(member.Role)
+				if role == "" {
+					role = "member"
+				}
+				if err := tx.Clauses(clause.OnConflict{UpdateAll: true}).Create(&projectMemberRow{
+					ProjectID: v.ID, UserID: member.UserID, Role: role, Created: timePtr(time.Now().UTC()),
+				}).Error; err != nil {
+					return err
+				}
 			}
 		}
 		if v.OwnerID > 0 {

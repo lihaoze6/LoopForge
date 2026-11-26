@@ -94,6 +94,8 @@ type Server struct {
 	notifications   *notificationHandlers
 	botInteractions *botInteractionHandlers
 	botIdentities   *botIdentityHandlers
+	rooms           *roomsHandlers
+	testEmployees   *testEmployeesHandlers
 	know            *knowledgeHandlers // knowledge.go / knowledge_proxy.go
 }
 
@@ -121,6 +123,7 @@ func NewWithNotificationsAndBackground(ctx context.Context, s *repo.Store, e *en
 		h.startSessionJanitor(ctx)
 		h.startAttachmentSweeper(ctx)
 	})
+	bg.startEmployeeDiscussions(ctx, bg.testEmployees)
 	return router, bg
 }
 
@@ -402,7 +405,9 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.Any("/api/issues/:id/requirement", api.issues.issue)
 	g.Any("/api/issues/:id/sops", api.issues.issue)
 	g.Any("/api/issues/:id/dispatch", api.issues.issue)
-	rooms := &roomsHandlers{deps: d}
+	api.testEmployees = &testEmployeesHandlers{deps: d, employees: s.TestEmployeesRepo, users: s.UsersRepo, projects: s.ProjectsRepo, model: callEmployeeModel}
+	api.rooms = &roomsHandlers{deps: d, employees: s.TestEmployeesRepo}
+	rooms := api.rooms
 	g.GET("/api/rooms", rooms.rooms)
 	g.POST("/api/rooms", rooms.rooms)
 	g.GET("/api/rooms/:id", rooms.room)
@@ -411,6 +416,26 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.POST("/api/rooms/:id/messages", rooms.messages)
 	g.POST("/api/rooms/:id/issues", rooms.createIssue)
 	g.POST("/api/rooms/:id/decisions", rooms.decide)
+	g.GET("/api/rooms/:id/history", rooms.messageHistory)
+	g.GET("/api/rooms/:id/messages/:messageId", rooms.messageByID)
+	g.PUT("/api/rooms/:id/mentions/:messageId/read", rooms.readMention)
+	g.GET("/api/room-mentions", rooms.roomMentions)
+	g.GET("/api/rooms/:id/discussion-settings", rooms.discussionSettings)
+	g.PUT("/api/rooms/:id/discussion-settings", rooms.discussionSettings)
+
+	employees := api.testEmployees
+	g.GET("/api/projects/:id/test-employees", employees.projectEmployees)
+	g.POST("/api/projects/:id/test-employees", employees.projectEmployees)
+	g.PUT("/api/projects/:id/test-employees/:userId", employees.updateEmployee)
+	g.GET("/api/projects/:id/test-employees/:userId/pause", employees.employeePause)
+	g.PUT("/api/projects/:id/test-employees/:userId/pause", employees.employeePause)
+	g.GET("/api/employee-model-sources", employees.connectionSources)
+	g.GET("/api/projects/:id/employee-model-connections", employees.authorizeConnection)
+	g.POST("/api/projects/:id/employee-model-connections", employees.authorizeConnection)
+	g.DELETE("/api/projects/:id/employee-model-connections/:connectionId", employees.revokeConnection)
+	g.POST("/api/projects/:id/employee-model-connections/test", employees.testConnection)
+	g.GET("/api/projects/:id/employee-discussion-failures", employees.discussionFailures)
+	g.POST("/api/projects/:id/employee-discussion-failures/:jobId/retry", employees.discussionFailures)
 	spaces := &spacesHandlers{deps: d, rooms: rooms}
 	g.GET("/api/spaces", spaces.spaces)
 	g.POST("/api/spaces", spaces.spaces)
@@ -437,7 +462,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.GET("/api/spaces/:id/lanes", spaces.laneList)
 	g.GET("/api/spaces/:id/lanes/:runId", spaces.lane)
 	g.POST("/api/spaces/:id/sops", spaces.startSOPs)
-	g.POST("/api/spaces/:id/decisions", rooms.decide)
+	g.POST("/api/spaces/:id/decisions", spaces.decide)
 	g.POST("/api/spaces/:id/flows", spaces.saveFlow)
 	g.GET("/api/spaces/:id/usage", spaces.usage)
 	g.POST("/api/chat-clarify", api.stream.chatClarify)
@@ -686,6 +711,9 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 		c.Status(http.StatusOK)
 		studioFileServer(static).ServeHTTP(c.Writer, c.Request)
 	})
+	if bg != nil {
+		bg.testEmployees = api.testEmployees
+	}
 	if startBackground != nil {
 		startBackground(asst, api.runs)
 	}

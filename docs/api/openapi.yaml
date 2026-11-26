@@ -3818,6 +3818,485 @@ paths:
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
         "409": {$ref: "#/components/responses/Conflict"}
+  /api/rooms:
+    get:
+      tags: [Projects]
+      operationId: listProjectRooms
+      parameters:
+        - {name: projectId, in: query, required: true, schema: {type: string}}
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ArrayOfProjectRooms"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+    post:
+      tags: [Projects]
+      operationId: createProjectRoom
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, required: [projectId, name], properties: {projectId: {type: string}, name: {type: string, maxLength: 80}}}
+      responses:
+        "201":
+          description: OK
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ProjectRoom"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+  /api/rooms/{roomId}:
+    parameters:
+      - {name: roomId, in: path, required: true, schema: {type: string}}
+    get:
+      tags: [Projects]
+      operationId: getProjectRoom
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ProjectRoom"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+    patch:
+      tags: [Projects]
+      operationId: renameProjectRoom
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, required: [name], properties: {name: {type: string, maxLength: 80}}}
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ProjectRoom"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+  /api/rooms/{roomId}/messages:
+    parameters:
+      - {name: roomId, in: path, required: true, schema: {type: string}}
+    get:
+      tags: [Projects]
+      operationId: getRecentRoomMessages
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ArrayOfRoomMessages"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+    post:
+      tags: [Projects]
+      operationId: postRoomMessage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/RoomMessageInput"}
+      responses:
+        "201":
+          description: OK
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/RoomMessage"}
+        "200":
+          description: Same client message already stored
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/RoomMessage"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+  /api/rooms/{roomId}/messages/{messageId}:
+    parameters:
+      - {name: roomId, in: path, required: true, schema: {type: string}}
+      - {name: messageId, in: path, required: true, schema: {type: string}}
+    get:
+      tags: [Projects]
+      operationId: getProjectRoomMessage
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/RoomMessage"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+  /api/rooms/{roomId}/history:
+    parameters:
+      - {name: roomId, in: path, required: true, schema: {type: string}}
+    get:
+      tags: [Projects]
+      operationId: getProjectRoomHistory
+      parameters:
+        - {name: before, in: query, required: false, schema: {type: string}}
+        - {name: limit, in: query, required: false, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/RoomMessagePage"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+  /api/rooms/{roomId}/mentions/{messageId}/read:
+    parameters:
+      - {name: roomId, in: path, required: true, schema: {type: string}}
+      - {name: messageId, in: path, required: true, schema: {type: string}}
+    put:
+      tags: [Projects]
+      operationId: markProjectRoomMentionRead
+      responses:
+        "204":
+          description: No content
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+  /api/room-mentions:
+    get:
+      tags: [Projects]
+      operationId: listMyProjectRoomMentions
+      parameters:
+        - {name: projectId, in: query, required: true, schema: {type: string}}
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/RoomMentionInbox"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+  /api/rooms/{roomId}/discussion-settings:
+    parameters:
+      - {name: roomId, in: path, required: true, schema: {type: string}}
+    get:
+      tags: [Projects]
+      operationId: getEmployeeDiscussionSettings
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/EmployeeDiscussionSettings"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+    put:
+      tags: [Projects]
+      operationId: setEmployeeDiscussionSettings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/EmployeeDiscussionSettings"}
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/EmployeeDiscussionSettings"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+  /api/rooms/{roomId}/issues:
+    parameters:
+      - {name: roomId, in: path, required: true, schema: {type: string}}
+    post:
+      tags: [Projects]
+      operationId: dispatchProjectRoomSOP
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, properties: {title: {type: string}, description: {type: string}, issueId: {type: string}, workflowIds: {type: array, items: {type: string}, maxItems: 5}}}
+      responses:
+        "201":
+          description: OK
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ObjectResult"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+  /api/rooms/{roomId}/decisions:
+    parameters:
+      - {name: roomId, in: path, required: true, schema: {type: string}}
+    post:
+      tags: [Projects]
+      operationId: decideProjectRoomApproval
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, required: [runId, nodeId, action], properties: {runId: {type: string}, nodeId: {type: string}, action: {enum: [approve, reject]}, reason: {type: string}}}
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ObjectResult"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+  /api/projects/{projectId}/test-employees:
+    parameters:
+      - {name: projectId, in: path, required: true, schema: {type: string}}
+    get:
+      tags: [Projects]
+      operationId: listProjectTestEmployees
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ObjectResult"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+    post:
+      tags: [Projects]
+      operationId: createProjectTestEmployee
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/TestEmployeeCreate"}
+      responses:
+        "201":
+          description: OK
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ObjectResult"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+  /api/projects/{projectId}/test-employees/{userId}:
+    parameters:
+      - {name: projectId, in: path, required: true, schema: {type: string}}
+      - {name: userId, in: path, required: true, schema: {type: integer, format: int64}}
+    put:
+      tags: [Projects]
+      operationId: updateProjectTestEmployee
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/TestEmployeeUpdate"}
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/TestEmployee"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+  /api/projects/{projectId}/test-employees/{userId}/pause:
+    parameters:
+      - {name: projectId, in: path, required: true, schema: {type: string}}
+      - {name: userId, in: path, required: true, schema: {type: integer, format: int64}}
+    get:
+      tags: [Projects]
+      operationId: getOwnTestEmployeePause
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/EmployeePause"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+    put:
+      tags: [Projects]
+      operationId: setTestEmployeePause
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/EmployeePause"}
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/EmployeePause"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+  /api/employee-model-sources:
+    get:
+      tags: [Projects]
+      operationId: listPersonalEmployeeModelSources
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ArrayOfEmployeeConnections"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+  /api/projects/{projectId}/employee-model-connections:
+    parameters:
+      - {name: projectId, in: path, required: true, schema: {type: string}}
+    get:
+      tags: [Projects]
+      operationId: listMyAuthorizedEmployeeConnections
+      responses:
+        "200":
+          description: Connections this caller has authorized for the project
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ArrayOfEmployeeConnections"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+    post:
+      tags: [Projects]
+      operationId: authorizeEmployeeModelConnection
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, required: [source, models], properties: {source: {type: string}, name: {type: string}, models: {type: array, items: {type: string}}}}
+      responses:
+        "201":
+          description: OK
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/EmployeeConnection"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+  /api/projects/{projectId}/employee-model-connections/{connectionId}:
+    parameters:
+      - {name: projectId, in: path, required: true, schema: {type: string}}
+      - {name: connectionId, in: path, required: true, schema: {type: string}}
+    delete:
+      tags: [Projects]
+      operationId: revokeEmployeeModelConnection
+      responses:
+        "204":
+          description: No content
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+  /api/projects/{projectId}/employee-model-connections/test:
+    parameters:
+      - {name: projectId, in: path, required: true, schema: {type: string}}
+    post:
+      tags: [Projects]
+      operationId: testEmployeeModelConnection
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/EmployeeConnectionTest"}
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ObjectResult"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "502":
+          description: The configured model did not return a successful response
+  /api/projects/{projectId}/employee-discussion-failures:
+    parameters:
+      - {name: projectId, in: path, required: true, schema: {type: string}}
+    get:
+      tags: [Projects]
+      operationId: listEmployeeDiscussionFailures
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ArrayOfDiscussionFailures"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+  /api/projects/{projectId}/employee-discussion-failures/{jobId}/retry:
+    parameters:
+      - {name: projectId, in: path, required: true, schema: {type: string}}
+      - {name: jobId, in: path, required: true, schema: {type: integer, format: int64}}
+    post:
+      tags: [Projects]
+      operationId: retryEmployeeDiscussionFailure
+      responses:
+        "204":
+          description: No content
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
 components:
   securitySchemes:
     bearerAuth:
@@ -4198,6 +4677,159 @@ components:
             items:
               $ref: "#/components/schemas/ScheduleJob"
   schemas:
+    ObjectResult:
+      type: object
+      additionalProperties: true
+    ProjectRoom:
+      type: object
+      required: [id, projectId, name]
+      properties:
+        id: {type: string}
+        projectId: {type: string}
+        name: {type: string}
+        members:
+          type: array
+          items:
+            type: object
+            properties:
+              userId: {type: integer, format: int64}
+              name: {type: string}
+              role: {type: string}
+    ArrayOfProjectRooms:
+      type: array
+      items: {$ref: "#/components/schemas/ProjectRoom"}
+    RoomMention:
+      type: object
+      required: [userId, start, end]
+      properties:
+        userId: {type: integer, format: int64}
+        start: {type: integer, minimum: 0, description: Inclusive Unicode code point index.}
+        end: {type: integer, minimum: 1, description: Exclusive Unicode code point index.}
+    RoomMessageInput:
+      type: object
+      required: [body]
+      properties:
+        body: {type: string, minLength: 1, maxLength: 4000}
+        clientId: {type: string, maxLength: 128}
+        mentions: {type: array, maxItems: 20, items: {$ref: "#/components/schemas/RoomMention"}}
+    RoomMessage:
+      type: object
+      properties:
+        id: {type: string}
+        roomId: {type: string}
+        userId: {type: integer, format: int64}
+        author: {type: string}
+        kind: {type: string}
+        body: {type: string}
+        createdAt: {type: string, format: date-time}
+        mentions: {type: array, items: {$ref: "#/components/schemas/RoomMention"}}
+    ArrayOfRoomMessages:
+      type: array
+      items: {$ref: "#/components/schemas/RoomMessage"}
+    RoomMessagePage:
+      type: object
+      properties:
+        messages: {$ref: "#/components/schemas/ArrayOfRoomMessages"}
+        hasMore: {type: boolean}
+    RoomMentionInbox:
+      type: object
+      properties:
+        unread: {type: integer, minimum: 0}
+        mentions:
+          type: array
+          items:
+            type: object
+            properties:
+              roomId: {type: string}
+              roomName: {type: string}
+              read: {type: boolean}
+              message: {$ref: "#/components/schemas/RoomMessage"}
+    EmployeeDiscussionSettings:
+      type: object
+      required: [enabled, replyLimit]
+      properties:
+        enabled: {type: boolean, default: false}
+        replyLimit: {type: integer, minimum: 1, maximum: 12, default: 4}
+    EmployeePause:
+      type: object
+      required: [paused]
+      properties:
+        paused: {type: boolean}
+    EmployeeConnection:
+      type: object
+      properties:
+        id: {type: string}
+        projectId: {type: string}
+        ownerId: {type: integer, format: int64}
+        employeeId: {type: integer, format: int64}
+        name: {type: string}
+        source: {type: string}
+        protocol: {type: string, enum: [chat, responses, messages]}
+        baseUrl: {type: string, format: uri}
+        models: {type: array, items: {type: string}}
+    ArrayOfEmployeeConnections:
+      type: array
+      items: {$ref: "#/components/schemas/EmployeeConnection"}
+    DedicatedEmployeeConnection:
+      type: object
+      required: [name, protocol, baseUrl, model]
+      properties:
+        name: {type: string}
+        protocol: {type: string, enum: [chat, responses, messages]}
+        baseUrl: {type: string, format: uri}
+        apiKey: {type: string, writeOnly: true}
+        model: {type: string}
+    EmployeeConnectionTest:
+      type: object
+      properties:
+        userId: {type: integer, format: int64}
+        connectionId: {type: string}
+        model: {type: string}
+        connection: {$ref: "#/components/schemas/DedicatedEmployeeConnection"}
+    TestEmployee:
+      type: object
+      properties:
+        projectId: {type: string}
+        userId: {type: integer, format: int64}
+        roleId: {type: string}
+        duty: {type: string}
+        prompt: {type: [string, "null"]}
+        connectionId: {type: string}
+        model: {type: string}
+        paused: {type: boolean}
+        revision: {type: integer}
+    TestEmployeeUpdate:
+      allOf:
+        - {$ref: "#/components/schemas/TestEmployee"}
+        - type: object
+          required: [revision]
+          properties:
+            connection: {$ref: "#/components/schemas/DedicatedEmployeeConnection"}
+    TestEmployeeCreate:
+      allOf:
+        - {$ref: "#/components/schemas/TestEmployee"}
+        - type: object
+          required: [loginName, displayName, password]
+          properties:
+            loginName: {type: string}
+            displayName: {type: string}
+            password: {type: string, writeOnly: true}
+            connection: {$ref: "#/components/schemas/DedicatedEmployeeConnection"}
+    ArrayOfDiscussionFailures:
+      type: array
+      items:
+        type: object
+        properties:
+          id: {type: integer, format: int64}
+          userId: {type: integer, format: int64}
+          roomId: {type: string}
+          roomName: {type: string}
+          employeeName: {type: string}
+          model: {type: string}
+          updatedAt: {type: string, format: date-time}
+          status: {type: string}
+          errorCode: {type: string}
+          error: {type: string}
     AssistantDefaults:
       type: object
       properties:
@@ -4434,6 +5066,9 @@ components:
         ownerId:
           type: integer
           format: int64
+        membersVersion:
+          type: string
+          description: Required when replacing the membership of an existing project.
         members:
           type: array
           items:

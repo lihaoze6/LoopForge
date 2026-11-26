@@ -774,7 +774,7 @@ func allModels() []any {
 		mrDeliveryStateRow{}, definitionRevisionRow{},
 		runnerRow{}, runnerTaskRow{}, runnerTaskEventRow{}, userRunnerPrefRow{},
 		assistantSessionRow{}, assistantTaskRow{}, assistantGenerationRow{}, assistantSessionReadRow{}, assistantPreferenceRow{}, assistantDiagnosticsRow{},
-		chatRoomRow{}, chatMessageRow{},
+		chatRoomRow{}, chatMessageRow{}, testEmployeeRow{}, employeeConnectionRow{}, roomMentionRow{}, employeeDiscussionRow{}, employeeDiscussionJobRow{},
 		requirementSpaceRow{}, spaceMemberRow{}, spaceArtifactRow{}, spaceArtifactRevisionRow{}, spaceThreadRow{},
 		engineInstanceRow{},
 		knowledgeSettingsRow{}, knowledgeSubmissionRow{},

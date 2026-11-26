@@ -94,7 +94,7 @@ async function api(path, options={}) {
     const res = await fetch(path, request);
     const body = await res.json().catch(()=>({}));
     if (!res.ok) {
-      const err=new Error(body.error || `HTTP ${res.status}`);err.code=body.code||'';
+      const err=new Error(body.error || `HTTP ${res.status}`);err.code=body.code||'';err.status=res.status;
       if(body.code==='repository_required'&&body.error)toastActions.set(body.error,{label:lfT('绑定仓库','Add repository'),run:()=>typeof openRepositoryModal==='function'&&openRepositoryModal()});
       throw err;
     }
@@ -957,6 +957,7 @@ async function boot(){
     if(name==='agents')applyAgentRoute();
     if(isProjectSharedAsset(name))applyAssetRoute();
     if(name==='projects')applyProjectAdminRoute();
+    if(name==='rooms')loadRooms({route: true});
     if(name==='collaboration'){
       const id=routePart(1);
       if(id){const url=new URL(location.href);url.searchParams.set('chatSession',id);history.replaceState({},'',url);const frame=$('#chatNextFrame');if(frame){frame.dataset.src='';mountNativeChat()}}
@@ -1380,6 +1381,7 @@ function bind(){
     closeScheduleJobModal();
     state.projectFilter=e.target.value;state.selectedIssue=null;
     if(state.currentView==='aiSchedules')refreshAISchedules();
+    if(state.currentView==='rooms')loadRooms({projectChanged: true});
     localStorage.setItem('agentflow.activeProject',state.projectFilter);
     if($('#botsView')?.classList.contains('active'))loadBots();
     resetListPages();
@@ -1825,7 +1827,7 @@ function setSettingsSidebarExpanded(expanded){
     });
   }
 }
-function viewTitles(){return {management:'设置',collaboration:'AI 工作台',issues:'需求列表',aiSchedules:'定时任务',bots:'通道管理',assistant:'AI 助手',runs:'运行记录',approvals:'待我确认',sops:'流程模板',flow:'流程设计',agents:'角色定义',mcp:'能力资产',rules:'能力资产',skills:'能力资产',dockerfiles:'环境资产',environments:'环境资产',sandboxes:'环境资产',observability:'统计',projects:'项目配置',platform:'平台管理',runners:'执行机器',settings:'个人配置',access:'访问密钥',guide:'访问密钥'}}
+function viewTitles(){return {management:'设置',collaboration:'AI 工作台',rooms:'协作群',issues:'需求列表',aiSchedules:'定时任务',bots:'通道管理',assistant:'AI 助手',runs:'运行记录',approvals:'待我确认',sops:'流程模板',flow:'流程设计',agents:'角色定义',mcp:'能力资产',rules:'能力资产',skills:'能力资产',dockerfiles:'环境资产',environments:'环境资产',sandboxes:'环境资产',observability:'统计',projects:'项目配置',platform:'平台管理',runners:'执行机器',settings:'个人配置',access:'访问密钥',guide:'访问密钥'}}
 // 设置侧栏只列一级入口；被合并进同一页的子视图（能力资产、环境资产的类型 Tab，
 // 从流程模板打开的流程设计）按 data-nav-match 高亮它们所属的入口。
 function settingsNavMatches(btn,name){return btn.dataset.view===name||String(btn.dataset.navMatch||'').split(/\s+/).includes(name)}
@@ -1949,6 +1951,7 @@ function persistView(name,push=false){
   if(name==='flow')next=flowViewHash();
   if(name==='agents'&&agentRouteId())next=`#/agents/${encodeURIComponent(agentRouteId())}${routePart(2)==='gov'?'/gov':''}`;
   if(isProjectSharedAsset(name)&&routePart(0)===name&&assetRouteId())next=`#/${name}/${encodeURIComponent(assetRouteId())}`;
+  if(name==='rooms'&&routePart(0)==='rooms'&&routePart(1))next=roomHash(routePart(1));
   if(name==='projects')next=projectAdminHash(state.projectAdminDetailId||'',state.projectAdminTab);
   if(name==='collaboration'){
     const current=(location.hash||'').replace(/^#\/?/,'').split('?')[0].split('/').filter(Boolean);
@@ -2003,7 +2006,7 @@ function switchView(name){
   $(`#${target}View`).classList.add('active');
   $('#pageTitle').textContent=titles[name]||name;
   // Views that render their own H1 hide the topbar title; #pageTitle keeps its text for tests and assistive tools.
-  document.body.classList.toggle('view-has-heading',!!$(`#${target}View`).querySelector('.page-heading,.page-header,.kb-head,.pa-ph'));
+  document.body.classList.toggle('view-has-heading',name==='rooms'||!!$(`#${target}View`).querySelector('.page-heading,.page-header,.kb-head,.pa-ph'));
   const isPureManagement = isSettingsManagementView(name);
   document.body.classList.toggle('management-mode', isPureManagement);
   // At ≤1000px the settings navigation is an overlay drawer: it opens when the
@@ -2013,7 +2016,7 @@ function switchView(name){
   setSettingsSidebarExpanded(!narrowSettings?isPureManagement:staying?settingsSidebarExpanded():!!prevView&&!isSettingsManagementView(previous));
   $('#managementEntry')?.classList.toggle('active', isPureManagement);
   $('#railSettingsEntry')?.classList.toggle('active', isPureManagement);
-  const noSidebarViews = ['issues', 'approvals', 'observability'];
+  const noSidebarViews = ['issues', 'approvals', 'observability', 'rooms'];
   document.body.classList.toggle('no-sidebar', noSidebarViews.includes(name));
   document.body.classList.toggle('chat-next-active', name==='collaboration');
   if(name==='collaboration'||isPureManagement)mountNativeChat();
@@ -2068,6 +2071,8 @@ function switchView(name){
   if(name==='agents'){api('/api/agents',{silent:true}).then(agents=>{state.data.agents=agents;renderAgents()}).catch(e=>toast(e.message));renderAgents();applyAgentRoute()}
   if(name==='settings')renderPersonalSettings();
   if(name==='platform')renderPlatformAdminPanel();
+  if(previous==='rooms'&&name!=='rooms')stopRoomView();
+  if(name==='rooms')loadRooms({route: true});
   if(name==='projects')renderProjectAdmin();
   if(assetViews.includes(name)){
     if(staying&&state.assetType===name){if(state.selectedAsset)closeAssetDetail({force:true});else renderAssets()}

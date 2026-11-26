@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
+
+	"gorm.io/gorm"
 )
 
 // Local accounts are an optional identity adapter. User IDs, permissions and
@@ -95,28 +97,53 @@ func (r *UsersRepo) ListPlatformAccounts() ([]PlatformAccount, error) {
 // CreateLocalAccount registers a new password account; it never takes over an
 // existing user row.
 func (r *UsersRepo) CreateLocalAccount(login, password string, admin bool) (domain.User, error) {
+	hash, err := localPasswordHash(password)
+	if err != nil {
+		return domain.User{}, err
+	}
+	var user domain.User
+	err = r.DB.Transaction(func(tx *gorm.DB) error {
+		var err error
+		user, err = r.createLocalAccount(tx, login, login, hash, admin)
+		return err
+	})
+	return user, err
+}
+
+func localPasswordHash(password string) (string, error) {
 	if len(password) < MinPasswordLength || len(password) > MaxPasswordLength {
-		return domain.User{}, errPasswordLength
+		return "", errPasswordLength
 	}
-	if _, exists := r.UserByLoginName(login); exists {
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	return string(hash), err
+}
+
+func (r *UsersRepo) createLocalAccount(tx *gorm.DB, login, name, hash string, admin bool) (domain.User, error) {
+	now := time.Now().UTC()
+	row := userRow{LoginName: login, ChineseName: name, Created: &now, Updated: &now}
+	if admin || IsAllowlistedPlatformAdmin(login) {
+		row.PlatformRole = domain.PlatformRoleAdmin
+	}
+	query := tx.Where("login_name = ?", login)
+	if !r.isMySQL() {
+		query = tx.Where("LOWER(login_name) = LOWER(?)", login)
+	}
+	var existing userRow
+	if err := query.Select("id").Take(&existing).Error; err == nil {
 		return domain.User{}, ErrLoginTaken
-	}
-	if err := r.PutUser(domain.User{LoginName: login, ChineseName: login}); err != nil {
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return domain.User{}, err
 	}
-	u, ok := r.UserByLoginName(login)
-	if !ok {
-		return domain.User{}, errors.New("could not read account")
-	}
-	if err := r.SetLocalPassword(u.ID, password); err != nil {
-		return domain.User{}, err
-	}
-	if admin {
-		if err := r.SetUserPlatformRole(u.ID, domain.PlatformRoleAdmin); err != nil {
-			return domain.User{}, err
+	if err := tx.Create(&row).Error; err != nil {
+		if errors.Is(err, gorm.ErrDuplicatedKey) {
+			return domain.User{}, ErrLoginTaken
 		}
+		return domain.User{}, err
 	}
-	return u, nil
+	if err := tx.Create(&localAccountRow{UserID: row.ID, PasswordHash: hash}).Error; err != nil {
+		return domain.User{}, err
+	}
+	return domain.User{ID: row.ID, LoginName: login, ChineseName: name, PlatformRole: row.PlatformRole, CreatedAt: now, UpdatedAt: now}, nil
 }
 
 // Always perform bcrypt work, including for unknown users, to avoid exposing

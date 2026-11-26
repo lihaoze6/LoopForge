@@ -72,15 +72,39 @@ func (t *inflightTracker) Wait(ctx context.Context) error {
 // Background controls the API process's autonomous work during shutdown or
 // handover: StopClaiming → WaitInflight → Stop.
 type Background struct {
-	recoveryGate   <-chan struct{}
-	scheduler      *schedule.Service
-	runnerControls *runnerControlHub
-	handedOver     atomic.Bool
-	stopOnce       sync.Once
-	claimOnce      sync.Once
+	recoveryGate        <-chan struct{}
+	scheduler           *schedule.Service
+	runnerControls      *runnerControlHub
+	employeeClaimCancel context.CancelFunc
+	employeeRunCancel   context.CancelFunc
+	employeeDone        chan struct{}
+	testEmployees       *testEmployeesHandlers
+	handedOver          atomic.Bool
+	stopOnce            sync.Once
+	claimOnce           sync.Once
 }
 
 // BackgroundOptions tunes startup of a process that may be replacing another.
+func (b *Background) startEmployeeDiscussions(ctx context.Context, employees *testEmployeesHandlers) {
+	b.startEmployeeWorker(ctx, func(claimCtx, runCtx context.Context) {
+		employees.runEmployeeDiscussions(claimCtx, runCtx, b.recoveryGate)
+	})
+}
+
+func (b *Background) startEmployeeWorker(ctx context.Context, run func(context.Context, context.Context)) {
+	claimCtx, claimCancel := context.WithCancel(ctx)
+	// The process's claim context is cancelled before draining starts. Running
+	// employee turns retain their request context until Stop explicitly cancels them.
+	runCtx, runCancel := context.WithCancel(context.WithoutCancel(ctx))
+	b.employeeClaimCancel = claimCancel
+	b.employeeRunCancel = runCancel
+	b.employeeDone = make(chan struct{})
+	go func() {
+		defer close(b.employeeDone)
+		run(claimCtx, runCtx)
+	}()
+}
+
 type BackgroundOptions struct {
 	// RecoveryGate, when set, postpones startup recovery of interrupted work
 	// (clarifications, schedule jobs) until it closes, so a successor does not
@@ -95,6 +119,9 @@ func (b *Background) StopClaiming() {
 		return
 	}
 	b.claimOnce.Do(func() {
+		if b.employeeClaimCancel != nil {
+			b.employeeClaimCancel()
+		}
 		if b.scheduler != nil {
 			b.scheduler.Stop()
 		}
@@ -120,6 +147,13 @@ func (b *Background) handedOverToSuccessor() bool {
 
 // WaitInflight waits until every tracked in-process task has finished.
 func (b *Background) WaitInflight(ctx context.Context) error {
+	if b != nil && b.employeeDone != nil {
+		select {
+		case <-b.employeeDone:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 	return inflightTasks.Wait(ctx)
 }
 
@@ -135,6 +169,12 @@ func (b *Background) Stop() {
 	}
 	b.stopOnce.Do(func() {
 		b.StopClaiming()
+		if b.employeeRunCancel != nil {
+			b.employeeRunCancel()
+		}
+		if b.employeeDone != nil {
+			<-b.employeeDone
+		}
 	})
 }
 

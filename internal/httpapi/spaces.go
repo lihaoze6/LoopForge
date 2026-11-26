@@ -77,6 +77,14 @@ func (h *spacesHandlers) loadSpace(c *gin.Context, write bool) (domain.ChatRoom,
 	return room, h.spaceFor(room), true
 }
 
+func (h *spacesHandlers) decide(c *gin.Context) {
+	room, _, ok := h.loadSpace(c, true)
+	if !ok {
+		return
+	}
+	h.rooms.decideRoom(c, room)
+}
+
 func (h *spacesHandlers) spaceFor(room domain.ChatRoom) domain.RequirementSpace {
 	if space, ok := h.repo.Space(room.ID); ok {
 		return space
@@ -217,20 +225,15 @@ func (h *spacesHandlers) createSpace(c *gin.Context) {
 		}
 	}
 	userID, author := h.rooms.roomActor(c)
-	room := domain.ChatRoom{ID: newChatID("room"), ProjectID: req.ProjectID, Name: req.Title, CreatedBy: userID}
-	if err := h.repo.PutRoom(room); err != nil {
+	room := domain.ChatRoom{ID: newChatID("room"), ProjectID: req.ProjectID, Name: req.Title, CreatedBy: userID, Kind: domain.RoomKindRequirement}
+	space := domain.RequirementSpace{ID: room.ID, ProjectID: room.ProjectID, Summary: req.Summary, CreatedBy: userID, IssueID: req.IssueID}
+	if err := h.repo.CreateRequirementRoom(room, space); err != nil {
 		respond(c, err)
 		return
 	}
 	room, _ = h.repo.Room(room.ID)
-	space := h.spaceFor(room)
-	space.Summary = req.Summary
-	space.CreatedBy = userID
-	space.IssueID = req.IssueID
-	if err := h.saveSpace(room, space); err != nil {
-		respond(c, err)
-		return
-	}
+	space = h.spaceFor(room)
+
 	if userID > 0 {
 		name := author
 		if m, ok := roster[userID]; ok {

@@ -8,13 +8,15 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/repo"
 
 	"github.com/gin-gonic/gin"
 )
 
 type roomsHandlers struct {
 	*deps
-	runCache roomRunCache
+	runCache  roomRunCache
+	employees *repo.TestEmployeesRepo
 }
 
 // roomMaxSOPs bounds one multi-SOP dispatch.
@@ -62,14 +64,19 @@ func (h *roomsHandlers) rooms(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "projectId is required"})
 			return
 		}
-		if _, ok := h.repo.Project(projectID); !ok {
+		if project, ok := h.repo.Project(projectID); !ok || project.ArchivedAt != nil {
 			c.JSON(http.StatusNotFound, gin.H{"error": "project not found"})
 			return
 		}
 		if !h.roomAccess(c, projectID, false) {
 			return
 		}
-		c.JSON(http.StatusOK, h.roomViews(h.repo.Rooms(projectID)))
+		groups, err := h.repo.GroupRooms(projectID)
+		if err != nil {
+			roomMessageError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, h.roomViews(groups))
 	case http.MethodPost:
 		var req struct {
 			ProjectID string `json:"projectId"`
@@ -84,7 +91,7 @@ func (h *roomsHandlers) rooms(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "projectId and name are required"})
 			return
 		}
-		if _, ok := h.repo.Project(req.ProjectID); !ok {
+		if project, ok := h.repo.Project(req.ProjectID); !ok || project.ArchivedAt != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "project not found"})
 			return
 		}
@@ -96,7 +103,7 @@ func (h *roomsHandlers) rooms(c *gin.Context) {
 			return
 		}
 		userID, _ := h.roomActor(c)
-		room := domain.ChatRoom{ID: newChatID("room"), ProjectID: req.ProjectID, Name: req.Name, CreatedBy: userID}
+		room := domain.ChatRoom{ID: newChatID("room"), ProjectID: req.ProjectID, Name: req.Name, CreatedBy: userID, Kind: domain.RoomKindProject}
 		if err := h.repo.PutRoom(room); err != nil {
 			respond(c, err)
 			return
@@ -109,21 +116,14 @@ func (h *roomsHandlers) rooms(c *gin.Context) {
 }
 
 func (h *roomsHandlers) room(c *gin.Context) {
-	room, ok := h.repo.Room(c.Param("id"))
+	room, ok := h.groupAccess(c, c.Request.Method == http.MethodPatch)
 	if !ok {
-		c.JSON(http.StatusNotFound, gin.H{"error": "room not found"})
 		return
 	}
 	switch c.Request.Method {
 	case http.MethodGet:
-		if !h.roomAccess(c, room.ProjectID, false) {
-			return
-		}
 		c.JSON(http.StatusOK, h.roomView(room))
 	case http.MethodPatch:
-		if !h.roomAccess(c, room.ProjectID, true) {
-			return
-		}
 		var req struct {
 			Name string `json:"name"`
 		}
@@ -151,58 +151,13 @@ func (h *roomsHandlers) room(c *gin.Context) {
 	}
 }
 
-func (h *roomsHandlers) messages(c *gin.Context) {
-	room, ok := h.repo.Room(c.Param("id"))
-	if !ok {
-		c.JSON(http.StatusNotFound, gin.H{"error": "room not found"})
-		return
-	}
-	if !h.roomAccess(c, room.ProjectID, c.Request.Method != http.MethodGet) {
-		return
-	}
-	switch c.Request.Method {
-	case http.MethodGet:
-		c.JSON(http.StatusOK, h.syncRoomRuns(room, h.repo.Messages(room.ID, 200)))
-	case http.MethodPost:
-		var req struct {
-			Body string `json:"body"`
-		}
-		if !decode(c, &req) {
-			return
-		}
-		body := strings.TrimSpace(req.Body)
-		if body == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "消息不能为空"})
-			return
-		}
-		if len([]rune(body)) > 4000 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "消息不能超过 4000 个字"})
-			return
-		}
-		userID, author := h.roomActor(c)
-		msg := domain.ChatMessage{ID: newChatID("msg"), RoomID: room.ID, UserID: userID, Author: author, Kind: "text", Body: body, CreatedAt: time.Now().UTC()}
-		if err := h.repo.PutMessage(msg); err != nil {
-			respond(c, err)
-			return
-		}
-		h.touchRoom(room)
-		c.JSON(http.StatusCreated, msg)
-	default:
-		c.JSON(http.StatusMethodNotAllowed, gin.H{"error": "method not allowed"})
-	}
-}
-
 func (h *roomsHandlers) createIssue(c *gin.Context) {
 	if c.Request.Method != http.MethodPost {
 		c.JSON(http.StatusMethodNotAllowed, gin.H{"error": "method not allowed"})
 		return
 	}
-	room, ok := h.repo.Room(c.Param("id"))
+	room, ok := h.groupAccess(c, true)
 	if !ok {
-		c.JSON(http.StatusNotFound, gin.H{"error": "room not found"})
-		return
-	}
-	if !h.roomAccess(c, room.ProjectID, true) {
 		return
 	}
 	var req roomIssueRequest
@@ -432,8 +387,7 @@ func (h *roomsHandlers) roomActor(c *gin.Context) (int64, string) {
 }
 
 func (h *roomsHandlers) touchRoom(room domain.ChatRoom) {
-	room.UpdatedAt = time.Now().UTC()
-	_ = h.repo.PutRoom(room)
+	_ = h.repo.TouchRoom(room.ID)
 }
 
 func (h *roomsHandlers) roomViews(rooms []domain.ChatRoom) []domain.ChatRoomView {
@@ -478,7 +432,7 @@ func (h *roomsHandlers) projectRoster(projectID string) []domain.ChatMember {
 		} else if cn != "" {
 			name = cn
 		}
-		members = append(members, domain.ChatMember{UserID: id, Name: name, Role: role})
+		members = append(members, domain.ChatMember{UserID: id, Name: name, Role: role, LoginName: user.LoginName, DisplayName: user.ChineseName})
 	}
 	add(project.OwnerID, "owner")
 	for _, member := range project.Members {

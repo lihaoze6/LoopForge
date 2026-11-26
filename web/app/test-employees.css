@@ -1,0 +1,57 @@
+.employee-actions, .employee-inline, .employee-record-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.employee-dialog {
+  width: min(620px, calc(100% - 24px));
+  max-height: min(86dvh, 830px);
+  padding: 0;
+  border: 1px solid var(--hui-border);
+  border-radius: 13px;
+  background: var(--hui-surface);
+  color: var(--hui-text);
+  box-shadow: var(--hui-popover-shadow);
+}
+.employee-dialog::backdrop { background: var(--hui-scrim); }
+.employee-dialog-frame { display: flex; flex-direction: column; max-height: min(86dvh, 830px); }
+.employee-dialog-frame > header {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+  padding: 18px 22px; border-bottom: 1px solid var(--hui-border);
+}
+.employee-dialog h2, .employee-dialog h3 { margin: 0; letter-spacing: -.015em; }
+.employee-dialog h2 { font-size: 18px; }
+.employee-dialog h3 { font-size: 14px; }
+.employee-dialog-frame header p { margin: 4px 0 0; color: var(--hui-muted); overflow-wrap: anywhere; }
+.employee-dialog-content { overflow: auto; padding: 16px 22px 20px; overscroll-behavior: contain; }
+.employee-form, .employee-manager { display: grid; gap: 14px; }
+.employee-manager section, .employee-form fieldset {
+  min-width: 0; margin: 0; padding: 12px;
+  border: 1px solid var(--hui-border); border-radius: 8px;
+}
+.employee-form fieldset > * + * { margin-top: 8px; }
+.employee-form legend { padding-inline: 5px; font-weight: 620; }
+.employee-form label { display: grid; gap: 5px; min-width: 0; font-size: 12px; overflow-wrap: anywhere; }
+.employee-form label.employee-inline { display: flex; margin: 6px 0; }
+.employee-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+.employee-span { grid-column: 1 / -1; }
+.employee-form :is(input, textarea, select):not([type=checkbox]) {
+  width: 100%; min-width: 0; padding: 7px 9px; border: 1px solid var(--hui-border-strong);
+  border-radius: 7px; background: var(--hui-surface); color: var(--hui-text); font: inherit; font-size: 13px;
+}
+.employee-form textarea { resize: vertical; }
+.employee-form footer, .employee-section-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.employee-form-error { color: var(--hui-error); margin: 0; }
+.employee-status { color: var(--hui-muted); font-size: 12px; margin: 3px 0; overflow-wrap: anywhere; }
+.employee-record { display: flex; align-items: center; gap: 8px; padding-block: 8px; border-bottom: 1px solid var(--hui-border-soft); }
+.employee-record:last-child { border-bottom: 0; padding-bottom: 0; }
+.employee-record-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.employee-record-text span { display: block; margin-top: 3px; color: var(--hui-muted); font-size: 12px; }
+.employee-pill { white-space: nowrap; border-radius: 8px; padding: 3px 7px; font-size: 11px; color: var(--hui-muted); background: var(--hui-soft); }
+.employee-pill.is-active { color: var(--hui-accent); background: var(--hui-accent-soft); }
+@media (max-width: 540px) {
+  .employee-form-grid { grid-template-columns: minmax(0, 1fr); }
+  .employee-dialog-frame > header, .employee-dialog-content { padding-inline: 13px; }
+  .employee-record { flex-wrap: wrap; }
+}

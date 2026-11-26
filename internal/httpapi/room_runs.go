@@ -343,14 +343,14 @@ type roomDecisionRequest struct {
 // decide lets a room member approve or send back a step of a run that was
 // dispatched from this room, and records the decision in the thread.
 func (h *roomsHandlers) decide(c *gin.Context) {
-	room, ok := h.repo.Room(c.Param("id"))
+	room, ok := h.groupAccess(c, true)
 	if !ok {
-		c.JSON(http.StatusNotFound, gin.H{"error": "room not found"})
 		return
 	}
-	if !h.roomAccess(c, room.ProjectID, true) {
-		return
-	}
+	h.decideRoom(c, room)
+}
+
+func (h *roomsHandlers) decideRoom(c *gin.Context, room domain.ChatRoom) {
 	var req roomDecisionRequest
 	if !decode(c, &req) {
 		return

@@ -4,7 +4,13 @@ import "time"
 
 // ChatRoom is a project group chat. Anyone working in the project can read
 // and post; membership shown in the room is the project member list.
+const (
+	RoomKindProject     = "project"
+	RoomKindRequirement = "requirement"
+)
+
 type ChatRoom struct {
+	Kind      string    `json:"kind,omitempty"`
 	ID        string    `json:"id"`
 	ProjectID string    `json:"projectId"`
 	Name      string    `json:"name"`
@@ -15,9 +21,11 @@ type ChatRoom struct {
 
 // ChatMember is a project member shown beside the room.
 type ChatMember struct {
-	UserID int64  `json:"userId"`
-	Name   string `json:"name"`
-	Role   string `json:"role,omitempty"`
+	UserID      int64  `json:"userId"`
+	Name        string `json:"name"`
+	LoginName   string `json:"loginName,omitempty"`
+	DisplayName string `json:"displayName,omitempty"`
+	Role        string `json:"role,omitempty"`
 }
 
 // ChatRoomView is a room plus the people who can see it.
@@ -34,24 +42,26 @@ type ChatRoomView struct {
 // TargetType "role" / "both" and AgentID remain on older messages from when
 // a room could assign a role without starting a SOP.
 type ChatMessage struct {
-	ID            string `json:"id"`
-	RoomID        string `json:"roomId"`
-	UserID        int64  `json:"userId,omitempty"`
-	Author        string `json:"author,omitempty"`
-	Kind          string `json:"kind"`
-	Body          string `json:"body"`
-	IssueID       string `json:"issueId,omitempty"`
-	IssueNumber   int    `json:"issueNumber,omitempty"`
-	IssueTitle    string `json:"issueTitle,omitempty"`
-	TargetType    string `json:"targetType,omitempty"` // sop, role, both
-	TargetID      string `json:"targetId,omitempty"`
-	TargetName    string `json:"targetName,omitempty"`
-	WorkflowID    string `json:"workflowId,omitempty"`
-	AgentID       string `json:"agentId,omitempty"`
-	TaskID        string `json:"taskId,omitempty"`
-	RunID         string `json:"runId,omitempty"`
-	DispatchError string `json:"dispatchError,omitempty"`
-	WorkflowName  string `json:"workflowName,omitempty"`
+	Mentions           []RoomMention `json:"mentions,omitempty"`
+	AutomationSourceID string        `json:"automationSourceId,omitempty"`
+	ID                 string        `json:"id"`
+	RoomID             string        `json:"roomId"`
+	UserID             int64         `json:"userId,omitempty"`
+	Author             string        `json:"author,omitempty"`
+	Kind               string        `json:"kind"`
+	Body               string        `json:"body"`
+	IssueID            string        `json:"issueId,omitempty"`
+	IssueNumber        int           `json:"issueNumber,omitempty"`
+	IssueTitle         string        `json:"issueTitle,omitempty"`
+	TargetType         string        `json:"targetType,omitempty"` // sop, role, both
+	TargetID           string        `json:"targetId,omitempty"`
+	TargetName         string        `json:"targetName,omitempty"`
+	WorkflowID         string        `json:"workflowId,omitempty"`
+	AgentID            string        `json:"agentId,omitempty"`
+	TaskID             string        `json:"taskId,omitempty"`
+	RunID              string        `json:"runId,omitempty"`
+	DispatchError      string        `json:"dispatchError,omitempty"`
+	WorkflowName       string        `json:"workflowName,omitempty"`
 	// Lane > 0 marks the extra SOPs of a multi-SOP dispatch; the issue card
 	// itself is lane 0.
 	Lane int `json:"lane,omitempty"`
@@ -103,3 +113,21 @@ const (
 	ChatKindApproval = "approval"
 	ChatKindDecision = "decision"
 )
+
+type RoomDiscussionSettings struct {
+	Enabled    bool `json:"enabled"`
+	ReplyLimit int  `json:"replyLimit"`
+}
+
+type RoomMention struct {
+	UserID int64 `json:"userId"`
+	Start  int   `json:"start"`
+	End    int   `json:"end"`
+}
+
+type RoomMentionNotice struct {
+	RoomID   string      `json:"roomId"`
+	RoomName string      `json:"roomName"`
+	Message  ChatMessage `json:"message"`
+	Read     bool        `json:"read"`
+}

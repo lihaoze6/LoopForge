@@ -1,39 +1,7 @@
 // Collaboration rooms and group-mode run detail, without a model.
-// rooms.js is not on index.html, so this loads that script after a minimal
-// host exists. The copy and the create request come from createRoom.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
-import path from 'node:path';
-import vm from 'node:vm';
-import { loadApp, settle, WEB_ROOT } from '../lib/load-app.mjs';
-
-async function loadRooms(app) {
-  app.evaluate(`
-    const host = document.createElement('div');
-    host.innerHTML = [
-      '<button type="button" id="newRoom"></button>',
-      '<button type="button" id="renameRoom" hidden></button>',
-      '<button type="button" id="roomModeChat"></button>',
-      '<button type="button" id="roomModeIssue"></button>',
-      '<form id="roomComposer">',
-      '<input id="roomInput">',
-      '<button type="button" id="roomDispatch"></button>',
-      '<select id="roomSOP"></select>',
-      '</form>',
-      '<div id="roomList"></div>',
-      '<div id="roomLog"></div>',
-      '<div id="roomResources"></div>',
-      '<h2 id="roomTitle"></h2>',
-      '<p id="roomSubtitle"></p>',
-    ].join('');
-    document.body.appendChild(host);
-    state.projectFilter = 'project-1';
-    state.currentView = 'home';
-  `);
-  const source = await readFile(path.join(WEB_ROOT, 'rooms.js'), 'utf8');
-  new vm.Script(source, { filename: path.join(WEB_ROOT, 'rooms.js') }).runInContext(app.context);
-}
+import { loadApp, settle } from '../lib/load-app.mjs';
 
 test('creating a collaboration room uses the existing prompt and posts the room', async (t) => {
   const app = await loadApp();
@@ -47,8 +15,11 @@ test('creating a collaboration room uses the existing prompt and posts the room'
   app.router.get(/^\/api\/rooms\?/, [{
     id: 'room-1', name: '需求值班群', projectId: 'project-1', members: [],
   }]);
+  app.router.get('/api/rooms/room-1', {id: 'room-1', name: '需求值班群', projectId: 'project-1', members: []});
   app.router.get(/^\/api\/rooms\/room-1\/messages/, []);
-  await loadRooms(app);
+  app.router.get(/^\/api\/room-mentions\?/, {mentions: [], unread: 0});
+  app.evaluate(`state.projectFilter='project-1';switchView('rooms')`);
+  await settle(6);
 
   app.document.querySelector('#newRoom').click();
   await settle(4);

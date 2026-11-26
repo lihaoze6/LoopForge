@@ -17,6 +17,7 @@ import (
 // requirement, members, versioned artifacts and threads.
 type SpacesRepo struct {
 	*deps
+	rooms *RoomsRepo
 }
 
 // ErrArtifactConflict reports an edit based on a stale artifact version.
@@ -24,6 +25,19 @@ var ErrArtifactConflict = errors.New("产物已被其他人更新，请刷新后
 
 func (r *SpacesRepo) Space(id string) (domain.RequirementSpace, bool) {
 	return payloadOne[domain.RequirementSpace](r.DB, "requirement_spaces", strings.TrimSpace(id))
+}
+
+// CreateRequirementRoom commits both records so a failed space cannot appear in the group list.
+func (r *SpacesRepo) CreateRequirementRoom(room domain.ChatRoom, space domain.RequirementSpace) error {
+	return r.DB.Transaction(func(tx *gorm.DB) error {
+		rooms := *r.rooms
+		rooms.deps = &deps{DB: tx}
+		if err := rooms.PutRoom(room); err != nil {
+			return err
+		}
+		scoped := &SpacesRepo{deps: rooms.deps}
+		return scoped.PutSpace(space)
+	})
 }
 
 func (r *SpacesRepo) PutSpace(v domain.RequirementSpace) error {
